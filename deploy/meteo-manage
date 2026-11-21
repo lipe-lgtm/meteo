@@ -1,0 +1,7 @@
+#!/bin/sh
+# Spouští manage.py se stejnou konfigurací jako služba.
+# Použití:  sudo -u meteo meteo-manage add-station outdoor_station "Venkovní stanice"
+set -a
+. /etc/meteo/meteo.env
+set +a
+cd /opt/meteo && exec /opt/meteo/venv/bin/python manage.py "$@"

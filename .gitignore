@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# databáze a tajné údaje nikdy do gitu
+*.db
+*.db-wal
+*.db-shm
+*.env
+!deploy/meteo.env.example
+firmware/config.py

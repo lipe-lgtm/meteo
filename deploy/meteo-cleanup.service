@@ -1,0 +1,9 @@
+[Unit]
+Description=Meteo – mazání starých měření
+
+[Service]
+Type=oneshot
+User=meteo
+WorkingDirectory=/opt/meteo
+EnvironmentFile=/etc/meteo/meteo.env
+ExecStart=/opt/meteo/venv/bin/python manage.py cleanup

@@ -1,0 +1,64 @@
+# Šablona – install.sh z ní vyrobí /etc/apache2/sites-available/meteo.conf
+#
+# Meteo vedle Nextcloudu na stejném Apache.
+
+# ------------------------------------------------------------
+# 1) Aplikace přes HTTPS – jen z domácí sítě a z VPN
+# ------------------------------------------------------------
+<VirtualHost *:443>
+    ServerName __DOMAIN__
+
+    SSLEngine on
+    SSLCertificateFile    /etc/letsencrypt/live/__DOMAIN__/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/__DOMAIN__/privkey.pem
+
+    # Kdo smí dovnitř: LAN + VPN. Platí pro API i pro aplikaci.
+    <Location />
+        Require ip __LAN_NET__ __WG_NET__
+    </Location>
+
+    Header always set Strict-Transport-Security "max-age=31536000"
+    Header always set X-Frame-Options "DENY"
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set Referrer-Policy "no-referrer"
+    Header always set Permissions-Policy "camera=(), microphone=(), geolocation=()"
+
+    # API -> gunicorn (jen na localhostu)
+    ProxyPreserveHost On
+    RequestHeader set X-Forwarded-Proto "https"
+    ProxyPass        /api/ http://127.0.0.1:__APP_PORT__/api/
+    ProxyPassReverse /api/ http://127.0.0.1:__APP_PORT__/api/
+
+    # Sem později přijde PWA aplikace (fáze 2)
+    DocumentRoot /srv/meteo/web
+    <Directory /srv/meteo/web>
+        Options -Indexes
+        AllowOverride None
+        Require ip __LAN_NET__ __WG_NET__
+        FallbackResource /index.html
+    </Directory>
+
+    ErrorLog  ${APACHE_LOG_DIR}/meteo_error.log
+    CustomLog ${APACHE_LOG_DIR}/meteo_access.log combined
+</VirtualHost>
+
+# ------------------------------------------------------------
+# 2) Vstup pro stanice v LAN (HTTP, port __STATION_PORT__)
+#    Jen 3 cesty, jen z domácí sítě. Všechno ostatní 403.
+# ------------------------------------------------------------
+Listen __STATION_PORT__
+<VirtualHost *:__STATION_PORT__>
+    ServerName meteo-stanice
+
+    <Location />
+        Require all denied
+    </Location>
+    <LocationMatch "^/(api/v1/ingest|api/v1/station/relay|data/simple)$">
+        Require ip __LAN_NET__
+    </LocationMatch>
+
+    ProxyPassMatch "^/(api/v1/ingest|api/v1/station/relay|data/simple)$" "http://127.0.0.1:__APP_PORT__/$1"
+
+    ErrorLog  ${APACHE_LOG_DIR}/meteo_stations_error.log
+    CustomLog ${APACHE_LOG_DIR}/meteo_stations_access.log combined
+</VirtualHost>
