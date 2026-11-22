@@ -24,7 +24,7 @@ import gc
 #   LED        -> GPIO 2   (onboard)
 # =========================================================
 
-FW_VERSION = "2026-11-22"
+FW_VERSION = "2026-11-22b"
 
 # Diagnostika: stav každého čidla se posílá s daty, aplikace ho ukáže v záložce Stanice.
 # Díky tomu jde ověřit čidlo na balkóně bez kabelu k počítači.
@@ -513,7 +513,11 @@ def send_data(temp_outdoor, hum_outdoor, light_lux, soil_data, air_quality):
             print(f"  Air Quality: (neměřeno)")
         print(f"  Relé: {relay.value()}")
 
-        response = urequests.post(INGEST_URL, data=json.dumps(data), headers=HEADERS, timeout=10)
+        # POZOR: posílat bajty, ne text. urequests počítá Content-Length jako len(data);
+        # u textu s diakritikou (°, –, č…) by to byly znaky místo bajtů a server
+        # by dostal useknutý JSON → HTTP 400.
+        body = json.dumps(data).encode("utf-8")
+        response = urequests.post(INGEST_URL, data=body, headers=HEADERS, timeout=10)
         status = response.status_code
         reply = None
         if status == 200:

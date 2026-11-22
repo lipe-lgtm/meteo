@@ -121,6 +121,10 @@ def _client_ip():
 def ingest():
     body = _json_body()
     if body is None:
+        # nejčastěji useknuté tělo (Content-Length nesedí na bajty) – ať je to v logu vidět
+        current_app.logger.warning(
+            "stanice %s: neplatný JSON (%s B, konec: %r)",
+            g.station_id, request.content_length, request.get_data(cache=True)[-40:])
         return jsonify(error="invalid_json"), 400
 
     readings, rejected = extract_readings(body.get("sensors"))
