@@ -1,4 +1,4 @@
-from machine import Pin, ADC, I2C, UART, reset
+from machine import Pin, ADC, I2C, UART, reset, reset_cause
 import time
 from dht import DHT22
 import onewire
@@ -24,8 +24,29 @@ import gc
 #   LED        -> GPIO 2   (onboard)
 # =========================================================
 
+FW_VERSION = "2026-11-22"
+
+# Diagnostika: stav každého čidla se posílá s daty, aplikace ho ukáže v záložce Stanice.
+# Díky tomu jde ověřit čidlo na balkóně bez kabelu k počítači.
+DIAG = {
+    "ds18b20": {"ok": None, "found": 0, "err": None},
+    "dht22": {"ok": None, "err": None},
+    "bh1750": {"ok": None, "err": None},
+    "pms5003": {"ok": None, "bytes": None, "err": None},
+}
+
+
+def diag_set(name, ok, err=None, **extra):
+    d = DIAG[name]
+    d["ok"] = ok
+    d["err"] = err
+    d.update(extra)
+
+
 # Přístupové údaje jsou v samostatném souboru config.py (nesdílet, necommitovat)
 from config import SSID, PASSWORD, SERVER, API_KEY
+
+RESET_CAUSE = reset_cause()   # 1 zapnutí, 2 hard reset, 3 watchdog, 4 deep sleep, 5 soft reset
 
 # Onboard LED (GPIO 2)
 led = Pin(2, Pin.OUT)
@@ -127,6 +148,7 @@ def init_bh1750():
     try:
         devices = i2c.scan()
         if BH1750_ADDR not in devices:
+            diag_set("bh1750", False, "nenalezen na I2C (SDA 21, SCL 22)")
             print(f"✗ BH1750 nenalezen na adrese 0x{BH1750_ADDR:02x}")
             print(f"  Nalezená zařízení: {[hex(d) for d in devices]}")
             return False
@@ -146,9 +168,11 @@ def read_bh1750():
     try:
         data = i2c.readfrom(BH1750_ADDR, 2)
         lux = (data[0] << 8 | data[1]) / 1.2
+        diag_set("bh1750", True)
         return round(lux, 1)
     except Exception as e:
         print(f"Chyba čtení BH1750: {e}")
+        diag_set("bh1750", False, str(e) or type(e).__name__)
         return None
 
 def light_category_from_lux(lux):
@@ -203,10 +227,13 @@ def read_pms5003():
 
         attempts = 0
         max_attempts = 10
+        seen = 0
+        bad = None
 
         while attempts < max_attempts:
             time.sleep(1)
             available = pms_uart.any()
+            seen = max(seen, available)
             print(f"  Pokus {attempts+1}/{max_attempts}: Dostupno {available} bytů")
 
             if available >= 32:
@@ -225,6 +252,7 @@ def read_pms5003():
 
                         pms5003_sleep()
 
+                        diag_set("pms5003", True, bytes=seen)
                         print(f"✓ PMS5003 DATA: PM2.5={pm25} µg/m³, PM10={pm10} µg/m³, AQI={aqi}")
                         print("--- PMS5003 Měření dokončeno ---\n")
 
@@ -235,12 +263,19 @@ def read_pms5003():
                             "status": get_aqi_status(aqi)
                         }
                     else:
+                        bad = "chybný kontrolní součet"
                         print("    ✗ Checksum error")
                 else:
+                    bad = "špatné start bajty (posunutý rámec)"
                     print("    ✗ Špatné start bytes")
 
             attempts += 1
 
+        if seen == 0:
+            bad = "žádná data na UART (TX/RX prohozené? 5 V?)"
+        elif seen < 32:
+            bad = f"jen {seen} B – neúplný rámec (napájení 5 V?)"
+        diag_set("pms5003", False, bad, bytes=seen)
         print("✗ PMS5003: Timeout - žádná platná data")
         pms5003_sleep()
         print("--- PMS5003 Měření selhalo ---\n")
@@ -248,6 +283,7 @@ def read_pms5003():
 
     except Exception as e:
         print(f"✗ Chyba čtení PMS5003: {e}")
+        diag_set("pms5003", False, str(e) or type(e).__name__)
         pms5003_sleep()
         print("--- PMS5003 Měření přerušeno chybou ---\n")
         return None
@@ -282,29 +318,54 @@ def get_aqi_status(aqi):
     else:
         return "Nebezpecny"
 
-def read_ds18b20(ds_sensor, roms, sensor_name):
-    """Čtení teploty z DS18B20"""
+def read_ds18b20(ds_sensor, sensor_name):
+    """Čtení teploty z DS18B20.
+
+    Typické poruchy a co znamenají:
+      nenalezen na sběrnici -> přerušený DATA vodič, chybí pull-up 4,7k, přehozené vodiče
+      CRC chyba             -> rušení/dlouhý kabel, slabý pull-up, špatný kontakt
+      85.0 °C               -> převod nedoběhl: obvykle napájení (VDD nezapojené = parazitní režim)
+    """
+    global roms_outdoor
     try:
-        if not roms:
+        if not roms_outdoor:
+            roms_outdoor = ds_sensor.scan()     # čidlo mohlo naskočit až po startu
+            if roms_outdoor:
+                print(f"{sensor_name}: DS18B20 nalezen dodatečně ({roms_outdoor[0].hex()})")
+        if not roms_outdoor:
             print(f"{sensor_name}: Žádný DS18B20 nenalezen!")
+            diag_set("ds18b20", False, "nenalezen na sběrnici (GPIO 4)", found=0, raw=None)
             return None
 
-        ds_sensor.convert_temp()
-        time.sleep_ms(750)
-        temp = ds_sensor.read_temp(roms[0])
+        for attempt in range(2):
+            ds_sensor.convert_temp()
+            time.sleep_ms(800)
+            temp = ds_sensor.read_temp(roms_outdoor[0])
+            if temp != 85.0:
+                break
+            print(f"{sensor_name}: DS18B20 vrátil 85 °C (převod nedoběhl), pokus {attempt + 1}/2")
 
-        if -40 <= temp <= 85:
+        if temp == 85.0:
+            diag_set("ds18b20", False, "85 °C – převod nedoběhl (napájení VDD?)",
+                     found=len(roms_outdoor), raw=temp)
+            return None
+        if -55 <= temp <= 70:
             print(f"{sensor_name} teplota: {temp}°C")
+            diag_set("ds18b20", True, found=len(roms_outdoor), raw=round(temp, 2))
             return round(temp, 1)
-        else:
-            print(f"{sensor_name}: Neplatná teplota {temp}°C")
-            return None
+        print(f"{sensor_name}: Neplatná teplota {temp}°C")
+        diag_set("ds18b20", False, "nesmyslná hodnota", found=len(roms_outdoor), raw=temp)
+        return None
     except Exception as e:
         print(f"{sensor_name}: Chyba DS18B20: {e}")
+        # po chybě zkusit sběrnici příště prohledat znovu
+        diag_set("ds18b20", False, str(e) or type(e).__name__, found=len(roms_outdoor), raw=None)
+        roms_outdoor = []
         return None
 
 def read_dht22_humidity(sensor, sensor_name):
     """Čtení POUZE vlhkosti z DHT22"""
+    last_err = None
     for attempt in range(3):
         try:
             time.sleep(3)
@@ -315,15 +376,18 @@ def read_dht22_humidity(sensor, sensor_name):
 
             if humidity is not None and 0 <= humidity <= 100:
                 print(f"{sensor_name} vlhkost: {humidity}%")
+                diag_set("dht22", True)
                 return round(humidity, 1)
             else:
                 print(f"{sensor_name}: Neplatná vlhkost, pokus {attempt + 1}/3")
                 time.sleep(1)
         except Exception as e:
+            last_err = str(e) or type(e).__name__
             print(f"{sensor_name}: Chyba {e}, pokus {attempt + 1}/3")
             time.sleep(1)
 
     print(f"{sensor_name}: Selhalo všech 3 pokusů čtení vlhkosti")
+    diag_set("dht22", False, last_err or "neplatná vlhkost")
     return None
 
 def read_soil_moisture():
@@ -427,8 +491,14 @@ def send_data(temp_outdoor, hum_outdoor, light_lux, soil_data, air_quality):
             "device_id": DEVICE_ID,
             "sensors": sensors_data,
             "relay_state": relay.value(),
-            "voltage": 5.0,
-            "uptime": time.time()
+            "uptime": time.time(),
+            "diag": {
+                "fw": FW_VERSION,
+                "rssi": wifi.status("rssi"),
+                "mem": gc.mem_free(),
+                "reset": RESET_CAUSE,
+                "sensors": DIAG,
+            },
         }
 
         print(f"\n>>> Odesílám data na server:")
@@ -445,10 +515,18 @@ def send_data(temp_outdoor, hum_outdoor, light_lux, soil_data, air_quality):
 
         response = urequests.post(INGEST_URL, data=json.dumps(data), headers=HEADERS, timeout=10)
         status = response.status_code
+        reply = None
+        if status == 200:
+            try:
+                reply = response.json()
+            except Exception:
+                pass
         response.close()
 
         if status == 200:
             print(f"✓ Data odeslána (HTTP {status})")
+            if reply and reply.get("rejected"):
+                print(f"  ⚠ Server odmítl: {reply['rejected']}")
             return True
         else:
             print(f"✗ Server vrátil HTTP {status}")
@@ -466,7 +544,7 @@ def read_all_sensors():
     print("ČTENÍ SENZORŮ")
     print("="*40)
 
-    temp_out = read_ds18b20(ds_outdoor, roms_outdoor, "Venkovní")
+    temp_out = read_ds18b20(ds_outdoor, "Venkovní")
     time.sleep(1)
 
     hum_out = read_dht22_humidity(sensor_outdoor_hum, "Venkovní")
@@ -538,19 +616,13 @@ def main():
         if current_time - last_measurement_time >= MEASUREMENT_INTERVAL:
             temp_out, hum_out, light_lux, soil_data, air_quality = read_all_sensors()
 
-            has_data = any([
-                temp_out is not None,
-                light_lux is not None
-            ])
-
-            if has_data:
-                if send_data(temp_out, hum_out, light_lux, soil_data, air_quality):
-                    last_measurement_time = current_time
-                else:
-                    print(f"⚠ Retry za {ERROR_RETRY_INTERVAL}s")
-                    time.sleep(ERROR_RETRY_INTERVAL)
+            # posílá se vždy – i když žádné čidlo nečte, server dostane diagnostiku
+            if temp_out is None and light_lux is None:
+                print("⚠ Žádná platná data ze senzorů (odesílám aspoň diagnostiku)")
+            if send_data(temp_out, hum_out, light_lux, soil_data, air_quality):
+                last_measurement_time = current_time
             else:
-                print("⚠ Žádná platná data ze senzorů")
+                print(f"⚠ Retry za {ERROR_RETRY_INTERVAL}s")
                 time.sleep(ERROR_RETRY_INTERVAL)
 
             gc.collect()

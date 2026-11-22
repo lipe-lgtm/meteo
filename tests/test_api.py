@@ -38,7 +38,7 @@ def app(tmp_path):
     })
     with app.app_context():
         conn = db.get_db()
-        conn.execute("INSERT INTO stations VALUES (?, ?, ?, ?, NULL, NULL)",
+        conn.execute("INSERT INTO stations (id, name, api_key_hash, created_at) VALUES (?, ?, ?, ?)",
                      ("outdoor_station", "Venku", hash_api_key(KEY), db.now()))
         conn.execute("INSERT INTO users VALUES (?, ?, ?)",
                      ("petr", hash_password("spravne-heslo-123"), db.now()))
@@ -90,6 +90,42 @@ def test_bad_values_dropped(client):
                        "light": {"lux": True}}}
     r = client.post("/api/v1/ingest", json=bad, headers={"X-API-Key": KEY})
     assert r.json["stored"] == 0
+    assert {x["metric"] for x in r.json["rejected"]} == {"temperature", "humidity", "light"}
+
+
+def test_diag_and_rejected_visible_in_stations(client):
+    """85 °C z DS18B20 (nedoběhlý převod) server odmítne a ukáže to v aplikaci."""
+    body = {
+        "sensors": {"outdoor": {"temperature": 85.0, "humidity": None}, "light": {"lux": 10}},
+        "diag": {
+            "fw": "2026-11-22", "rssi": -67, "mem": 81234,
+            "sensors": {"ds18b20": {"ok": False, "found": 1, "err": "85 °C" + "x" * 500},
+                        "dht22": {"ok": False, "err": "ETIMEDOUT"}},
+            "junk": [1, 2, 3],
+        },
+    }
+    r = client.post("/api/v1/ingest", json=body, headers={"X-API-Key": KEY})
+    assert r.json["stored"] == 1
+    assert r.json["rejected"] == [{"metric": "temperature", "value": 85.0}]
+    login(client)
+    st = client.get("/api/v1/stations").json["stations"][0]
+    assert st["diag"]["rejected"][0]["value"] == 85.0
+    diag = st["diag"]["station"]
+    assert diag["rssi"] == -67 and diag["junk"] is None
+    assert len(diag["sensors"]["ds18b20"]["err"]) == 120
+    assert st["diag_at"] is not None
+
+
+def test_old_database_gets_new_columns(tmp_path):
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE stations (id TEXT PRIMARY KEY, name TEXT NOT NULL, api_key_hash TEXT NOT NULL,"
+                 " created_at INTEGER NOT NULL, last_seen INTEGER, last_uptime REAL)")
+    conn.commit()
+    conn.close()
+    create_app({"DATABASE": str(path), "SECRET_KEY": "t", "TESTING": True})
+    cols = {r[1] for r in sqlite3.connect(path).execute("PRAGMA table_info(stations)")}
+    assert {"diag", "diag_at"} <= cols
 
 
 def test_history(client):
@@ -240,3 +276,101 @@ def test_forecast_falls_back_to_stale(geo_app, monkeypatch):
     assert r.status_code == 200 and r.json["stale"] is True
     forecast.clear_cache()
     assert c.get("/api/v1/forecast").status_code == 503
+
+
+# ------------------------------------------------------------------ radar ČHMÚ
+
+def _radar_png(color=(255, 0, 0, 255)):
+    """Obrázek jako od ČHMÚ: 680×460, mapa vlevo dole, řezy vpravo/nahoře."""
+    import io
+    from PIL import Image
+    img = Image.new("RGBA", (680, 460), (0, 0, 0, 0))
+    img.paste(color, (100, 200, 140, 240))          # srážka v mapové části
+    img.paste((200, 200, 200, 255), (620, 0, 680, 460))   # řez – musí se oříznout
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    return out.getvalue()
+
+
+def _radar_tar(calc_ts):
+    import io
+    import tarfile
+    import time as _t
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        for lead in range(10, 70, 10):
+            stamp = _t.strftime("%Y%m%d.%H%M", _t.gmtime(calc_ts + lead * 60))
+            data = _radar_png((0, 0, 255, 255))
+            info = tarfile.TarInfo(f"pacz2gmaps3.fct_z_max.{stamp}.{lead:02d}.png")
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+        evil = tarfile.TarInfo("../../etc/passwd")
+        evil.size = 4
+        tar.addfile(evil, io.BytesIO(b"root"))
+    return buf.getvalue()
+
+
+@pytest.fixture
+def radar_env(monkeypatch):
+    from meteo import radar
+    radar.clear_cache()
+    now = 1795302000 + 7 * 60 + 30          # 3 minuty po zveřejnění slotu :05
+    latest = now // 300 * 300 - 300          # aktuální slot ještě není venku
+    calls = []
+
+    def fake_fetch(url, limit, timeout=10):
+        calls.append(url)
+        if fake_fetch.down:
+            raise OSError("down")
+        if url.endswith(".tar"):
+            return _radar_tar(latest) if radar._stamp(latest) in url else None
+        if radar._stamp(latest + 300) in url:
+            return None
+        return _radar_png()
+    fake_fetch.down = False
+    monkeypatch.setattr(radar, "fetch_bytes", fake_fetch)
+    monkeypatch.setattr(radar.time, "time", lambda: now)
+    return radar, now, latest, calls, fake_fetch
+
+
+def test_radar_frames_cropped_and_forecast(client, radar_env):
+    import io
+    from PIL import Image
+    radar, now, latest, calls, _ = radar_env
+    assert client.get("/api/v1/radar").status_code == 401
+    login(client)
+    r = client.get("/api/v1/radar")
+    assert r.status_code == 200
+    d = r.json
+    assert d["bounds"] == [[48.047, 11.267], [51.458, 19.624]]
+    obs = [f for f in d["frames"] if f["kind"] == "obs"]
+    fct = [f for f in d["frames"] if f["kind"] == "fct"]
+    assert len(obs) == 7 and obs[-1]["t"] == latest and obs[0]["t"] == latest - 3600
+    assert [f["t"] - latest for f in fct] == [600, 1200, 1800, 2400, 3000, 3600]
+    assert all("png_masked" in u for u in calls)
+
+    img = client.get(obs[-1]["url"])
+    assert img.status_code == 200 and img.mimetype == "image/png"
+    assert "immutable" in img.headers["Cache-Control"]
+    pic = Image.open(io.BytesIO(img.data))
+    assert pic.size == (598, 378)
+    assert pic.getpixel((120, 220 - 82))[:3] == (255, 0, 0)   # srážka zůstala na místě
+    assert pic.getpixel((597, 10))[3] == 0                      # řez je pryč
+
+    n = len(calls)
+    client.get("/api/v1/radar")
+    assert len(calls) == n                                       # do minuty z paměti
+
+
+def test_radar_rejects_bad_ids_and_survives_outage(client, radar_env, monkeypatch):
+    radar, now, latest, calls, fake = radar_env
+    login(client)
+    assert client.get("/api/v1/radar/..%2f..%2fetc.png").status_code == 404
+    assert client.get("/api/v1/radar/obs-123.png").status_code == 404
+    client.get("/api/v1/radar")
+    fake.down = True
+    monkeypatch.setattr(radar.time, "time", lambda: now + 120)
+    r = client.get("/api/v1/radar")
+    assert r.status_code == 200 and r.json["stale"] is True
+    radar.clear_cache()
+    assert client.get("/api/v1/radar").status_code == 503

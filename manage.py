@@ -120,6 +120,32 @@ def cmd_list_stations(_args):
         print(f"{r['id']:<20} {r['name']:<30} naposledy: {seen}")
 
 
+def cmd_status(_args):
+    """Co stanice naposledy poslaly – kontrola čidel přímo z SSH."""
+    import json
+    conn = open_db()
+    fmt = lambda ts: datetime.fromtimestamp(ts, PRAGUE).strftime("%d.%m. %H:%M") if ts else "nikdy"
+    for st in conn.execute("SELECT id, name, last_seen, diag FROM stations ORDER BY id"):
+        print(f"\n{st['name']} ({st['id']}) – naposledy {fmt(st['last_seen'])}")
+        for r in conn.execute(
+            """SELECT metric, value, MAX(ts) AS ts FROM readings
+               WHERE station_id = ? GROUP BY metric ORDER BY metric""", (st["id"],)):
+            print(f"  {r['metric']:<14} {r['value']:>9g}   {fmt(r['ts'])}")
+        diag = json.loads(st["diag"]) if st["diag"] else None
+        diag = diag or {}
+        for item in diag.get("rejected") or []:
+            print(f"  ! server zahodil {item['metric']} = {item['value']}")
+        info = diag.get("station") or {}
+        if not info:
+            print("  (stanice neposílá diagnostiku čidel – starý firmware)")
+            continue
+        for name, s in (info.get("sensors") or {}).items():
+            state = "OK" if s.get("ok") else ("CHYBA" if s.get("ok") is False else "–")
+            print(f"  čidlo {name:<8} {state:<6} {s.get('err') or ''}")
+        if info.get("rssi") is not None:
+            print(f"  Wi-Fi {info['rssi']:g} dBm, volná paměť {info.get('mem') or 0:g} B, firmware {info.get('fw')}")
+
+
 def cmd_cleanup(_args):
     days = int(os.environ.get("METEO_RETENTION_DAYS", "730"))
     deleted = db.cleanup(open_db(), days)
@@ -242,6 +268,7 @@ def main():
 
     sub.add_parser("list-stations").set_defaults(func=cmd_list_stations)
     sub.add_parser("cleanup").set_defaults(func=cmd_cleanup)
+    sub.add_parser("status", help="poslední hodnoty a stav čidel").set_defaults(func=cmd_status)
 
     sp = sub.add_parser("migrate-legacy")
     sp.add_argument("source", help="cesta ke staré home_center.db")

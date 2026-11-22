@@ -91,8 +91,14 @@ proto jsou obrázky aplikace v `web/img/`.
   data CC BY 4.0). Ptá se server, poloha domova tak zůstává na Pi; odpověď drží
   15 minut a při výpadku vrátí poslední známou. Srážky na příští 3 hodiny jsou
   z 15minutové předpovědi.
-- **Radar:** [RainViewer](https://www.rainviewer.com/) – poslední hodina snímků
-  (od 2026 jen minulé snímky, max. zoom 7, 100 dotazů/min z jedné IP).
+- **Radar:** otevřená data [ČHMÚ](https://opendata.chmi.cz/meteorology/weather/radar/) –
+  kompozit radarů Brdy a Skalky po 5 minutách, 1 km rozlišení. Aplikace ukazuje
+  poslední hodinu a extrapolaci pohybu srážek na +60 minut (ČHMÚ posouvá srážky
+  podle větru, intenzitu nemění). Varianta „maskovaná“: plnou barvou jen srážky,
+  které dopadají na zem. Snímky stahuje server, jen když je někdo otevře
+  (nejvýš jednou za minutu), ořízne z nich řezy a popisky a drží je v paměti.
+  Když ČHMÚ neodpovídá, aplikace přepne na [RainViewer](https://www.rainviewer.com/)
+  (jen minulost, hrubší). Atribuce: „Radar © ČHMÚ“.
 - **Mapa:** OpenStreetMap, ztmavená filtrem. Podle pravidel OSM aplikace posílá
   Referer, zobrazuje atribuci a dlaždice neukládá pro offline.
 
@@ -105,11 +111,18 @@ Ve složce `firmware/`: `main.py` a `config.example.py`. Zkopíruj `config.examp
 jako `config.py`, vlož do něj řádky, které vypsal `install.sh`, a oba soubory nahraj
 přes Thonny. `config.py` je v `.gitignore` – hesla do gitu nepatří.
 
+**Diagnostika čidel:** firmware posílá s daty i stav každého čidla (nalezeno na
+sběrnici, chyba čtení, 85 °C u DS18B20 = nedoběhlý převod, kolik bajtů poslal
+PMS5003), sílu Wi-Fi a volnou paměť. Vidíš to v aplikaci v záložce **Stanice**
+nebo přes `meteo-manage status`. Hodnoty mimo fyzikální rozsah server zahodí
+a zapíše do logu i do diagnostiky, takže nezmizí potichu.
+
 Displej s RSS (Pico WH): změň `TEMP_SERVER_URL` na adresu, kterou vypsal `install.sh`.
 
 ## Správa
 
 ```bash
+sudo -u meteo meteo-manage status                     # poslední hodnoty a stav čidel
 sudo -u meteo meteo-manage list-stations              # kdy se která stanice ozvala
 sudo -u meteo meteo-manage rotate-key outdoor_station # nový klíč (starý přestane platit)
 sudo -u meteo meteo-manage set-password petr          # změna hesla
@@ -132,18 +145,20 @@ sudo -u meteo meteo-manage migrate-legacy /tmp/home_center.db --since 2026-11-01
 | časy v místním čase, posuny o hodinu | vše v UTC, převod až v aplikaci |
 | Flask vývojový server | gunicorn za Apache, přístup jen z LAN a VPN |
 
-## API (pro fázi 2)
+## API
 
 | Metoda | Cesta | Kdo |
 |---|---|---|
 | POST | `/api/v1/ingest` | stanice |
 | GET | `/api/v1/station/relay` | stanice |
 | POST | `/api/v1/auth/login`, `/auth/logout` · GET `/auth/me` | aplikace |
-| GET | `/api/v1/stations` – online/offline, relé | aplikace |
+| GET | `/api/v1/stations` – online/offline, relé, diagnostika čidel | aplikace |
 | GET | `/api/v1/latest` – poslední hodnota každé veličiny | aplikace |
 | GET | `/api/v1/history?station=&metric=&hours=&points=` | aplikace |
 | POST | `/api/v1/relay` `{station, state}` | aplikace |
 | POST | `/api/v1/admin/reset` `{password, confirm:"SMAZAT"}` | aplikace |
+| GET | `/api/v1/config`, `/api/v1/forecast` – poloha, předpověď | aplikace |
+| GET | `/api/v1/radar`, `/api/v1/radar/<id>.png` – snímky ČHMÚ | aplikace |
 | GET | `/api/v1/health` | kdokoli |
 
 Změnové požadavky z aplikace musí mít hlavičku `X-Requested-With: meteo-app`.

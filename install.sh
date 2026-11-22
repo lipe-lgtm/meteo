@@ -192,7 +192,7 @@ install -d -o meteo -g meteo -m 750 "$DATA_DIR"
 
 rm -rf "$APP_DIR/meteo"
 cp -r "$SRC/meteo" "$APP_DIR/"
-cp "$SRC/wsgi.py" "$SRC/manage.py" "$SRC/requirements.txt" "$APP_DIR/"
+cp "$SRC/wsgi.py" "$SRC/manage.py" "$SRC/requirements.txt" "$SRC/deploy/gunicorn.conf.py" "$APP_DIR/"
 find "$APP_DIR/meteo" -name __pycache__ -prune -exec rm -rf {} +
 [[ -x $APP_DIR/venv/bin/python ]] || python3 -m venv "$APP_DIR/venv"
 "$APP_DIR/venv/bin/pip" install -q --disable-pip-version-check -r "$APP_DIR/requirements.txt"

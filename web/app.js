@@ -386,22 +386,37 @@ function todayRange(points) {
   return { min: Math.min(...today.map((p) => p[2])), max: Math.max(...today.map((p) => p[3])) };
 }
 
-function heroCard(v, temp, now) {
+// Co stanice hlásí o čidle (diagnostika z firmwaru + hodnoty, které server odmítl)
+function sensorProblem(station, sensor, metric) {
+  const d = station && station.diag;
+  if (!d) return null;
+  const s = d.station && d.station.sensors && d.station.sensors[sensor];
+  if (s && s.ok === false) return s.err || 'chyba čtení';
+  const rej = (d.rejected || []).find((r) => r.metric === metric);
+  return rej ? `nesmyslná hodnota ${typeof rej.value === "number" ? nf1.format(rej.value) : rej.value} (server ji zahodil)` : null;
+}
+
+function heroCard(v, temp, now, problem) {
+  const hint = problem ? h('a', { class: 'banner warn', href: '#/stanice' },
+    h('span', { text: `Čidlo teploty: ${problem}` }), icon('chevron', { color: '#7d8896' })) : null;
   if (!v) {
     return h('div', { class: 'card hero' },
       h('div', { class: 'card-head' }, h('h2', { class: 'section-title', text: 'Venku' })),
-      h('p', { class: 'note', text: 'Venkovní stanice zatím neposlala teplotu.' }));
+      h('p', { class: 'note', text: 'Venkovní stanice zatím neposlala teplotu.' }),
+      hint);
   }
   const stale = now - v.ts > STALE_AFTER;
   const range = todayRange(temp.points);
-  return h('a', { class: 'card hero', href: '#/detail/temperature', 'aria-label': `Teplota venku ${fmtSigned(v.value, 1)} stupňů, podrobnosti` },
+  // starší hodnota + čidlo hlásí chybu → upozornění pod kartou (odkaz nesmí být v odkazu)
+  return [h('a', { class: 'card hero', href: '#/detail/temperature', 'aria-label': `Teplota venku ${fmtSigned(v.value, 1)} stupňů, podrobnosti` },
     h('div', { class: 'card-head' }, h('h2', { class: 'section-title', text: 'Venku' }), icon('chevron', { size: 'lg', color: '#7d8896' })),
     h('div', { class: 'hero-row' },
       h('span', { class: `hero-value ${stale ? 'stale' : ''}`, text: `${fmtSigned(v.value, 1)}°` }),
       temp.points.length > 1 ? h('div', { class: 'spark' }, lineChart(temp.points, { width: 150, height: 56, compact: true })) : null),
     h('div', { class: 'hero-meta' },
       h('span', { text: stale ? `Naměřeno ${ago(v.ts, now)}` : `Aktualizováno ${timeHM.format(new Date(v.ts * 1000))}` }),
-      range ? h('span', null, 'dnes ', h('strong', { text: `${fmtSigned(range.max, 1)}°` }), ` / ${fmtSigned(range.min, 1)}°`) : null));
+      range ? h('span', null, 'dnes ', h('strong', { text: `${fmtSigned(range.max, 1)}°` }), ` / ${fmtSigned(range.min, 1)}°`) : null)),
+  stale ? hint : null];
 }
 
 function airCard(m, now) {
@@ -477,7 +492,8 @@ function overviewView(data, { cachedAt } = {}) {
         h('h1', { text: 'Doma' })),
       statusPill(data.stations.stations, now)),
     cachedAt ? offlineBanner(cachedAt) : null,
-    heroCard(out.temperature, data.temp, now),
+    heroCard(out.temperature, data.temp, now,
+      sensorProblem(data.stations.stations.find((x) => x.id === OUTDOOR), 'ds18b20', 'temperature')),
     airCard(out, now),
     h('div', { class: 'grid2' }, humidityTile(out.humidity, now), indoorTile(indoor, now)),
     forecastCard(data.forecast),
@@ -570,6 +586,64 @@ async function viewDetail(metric, station = OUTDOOR) {
 
 // ------------------------------------------------------------------ stanice
 
+const SENSORS = [
+  { key: 'ds18b20', label: 'Teplota', part: 'DS18B20', metric: 'temperature', fmt: (s) => s.raw != null ? `${fmtSigned(s.raw, 1)} °C` : '' },
+  { key: 'dht22', label: 'Vlhkost', part: 'DHT22', metric: 'humidity' },
+  { key: 'bh1750', label: 'Světlo', part: 'BH1750', metric: 'light' },
+  { key: 'pms5003', label: 'Kvalita vzduchu', part: 'PMS5003', metric: 'pm25' },
+];
+const RESET_CAUSES = { 1: 'zapnutí napájení', 2: 'reset tlačítkem', 3: 'watchdog', 4: 'probuzení', 5: 'softwarový restart' };
+
+function rssiLabel(dbm) {
+  if (dbm >= -60) return 'výborný';
+  if (dbm >= -70) return 'dobrý';
+  if (dbm >= -80) return 'slabý';
+  return 'velmi slabý';
+}
+
+function diagSection(st, now) {
+  const wrap = h('div', { class: 'diag' }, h('h3', { class: 'diag-title', text: 'Čidla' }));
+  const d = st.diag;
+  const info = d && d.station;
+  const rejected = (d && d.rejected) || [];
+  if (!info) {
+    for (const r of rejected) {
+      const sn = SENSORS.find((x) => x.metric === r.metric);
+      wrap.append(h('div', { class: 'sensor' }, h('span', { class: 'dot bad' }),
+        h('span', { class: 'sensor-name' }, h('span', { text: sn ? sn.label : r.metric }), h('span', { class: 'part', text: sn ? sn.part : '' })),
+        h('span', { class: 'sensor-state bad', text: `nesmyslná hodnota ${typeof r.value === 'number' ? nf1.format(r.value) : r.value} (server ji zahodil)` })));
+    }
+    wrap.append(h('p', { class: 'note', text: st.last_seen
+      ? 'Podrobný stav čidel ukáže nový firmware (firmware/main.py).'
+      : 'Stanice se ještě neozvala.' }));
+    return wrap;
+  }
+  for (const sn of SENSORS) {
+    const s = (info.sensors || {})[sn.key];
+    const rej = rejected.find((r) => r.metric === sn.metric);
+    let state = 'idle';
+    let text = 'zatím neměřeno';
+    if (s && s.ok === true) { state = 'ok'; text = (sn.fmt && sn.fmt(s)) || 'v pořádku'; }
+    if (rej) { state = 'bad'; text = `nesmyslná hodnota ${typeof rej.value === "number" ? nf1.format(rej.value) : rej.value} (server ji zahodil)`; }
+    if (s && s.ok === false) { state = 'bad'; text = s.err || 'chyba čtení'; }
+    if (sn.key === 'pms5003' && s && s.bytes != null && state !== 'ok') text += ` · UART ${s.bytes} B`;
+    wrap.append(h('div', { class: 'sensor' },
+      h('span', { class: `dot ${state}` }),
+      h('span', { class: 'sensor-name' }, h('span', { text: sn.label }), h('span', { class: 'part', text: sn.part })),
+      h('span', { class: `sensor-state ${state}`, text }),
+    ));
+  }
+  const rows = [];
+  if (typeof info.rssi === 'number') rows.push(['Wi-Fi signál', `${fmtSigned(info.rssi, 0)} dBm · ${rssiLabel(info.rssi)}`]);
+  if (info.reset != null) rows.push(['Poslední start', RESET_CAUSES[info.reset] || `kód ${info.reset}`]);
+  if (typeof info.mem === 'number') rows.push(['Volná paměť', `${nf0.format(info.mem / 1024)} kB`]);
+  if (info.fw) rows.push(['Firmware', String(info.fw)]);
+  if (st.diag_at) rows.push(['Stav k', `${timeHM.format(new Date(st.diag_at * 1000))} (${ago(st.diag_at, now)})`]);
+  if (rows.length) wrap.append(h('div', { class: 'diag-sep' }));
+  for (const [k, v] of rows) wrap.append(h('div', { class: 'kv' }, h('span', { text: k }), h('span', { text: v })));
+  return wrap;
+}
+
 async function viewStations() {
   const { stations, now } = await api('/stations');
   const me = await api('/auth/me');
@@ -601,6 +675,7 @@ async function viewStations() {
         h('span', { class: 'pill' }, h('span', { class: `dot ${st.online ? 'ok' : 'off'}` }), h('span', { text: st.online ? 'Online' : 'Offline' }))),
       h('div', { class: 'kv' }, h('span', { text: 'Poslední data' }), h('span', { text: st.last_seen ? `${ago(st.last_seen, now)} (${timeHM.format(new Date(st.last_seen * 1000))})` : 'nikdy' })),
       st.uptime && st.uptime < 3e8 ? h('div', { class: 'kv' }, h('span', { text: 'Běží bez restartu' }), h('span', { text: ago(now - st.uptime, now).replace('před ', '') })) : null,
+      diagSection(st, now),
       relay.desired !== null && relay.desired !== undefined ? h('div', { class: 'switch-row' },
         h('div', { class: 'row-text' },
           h('span', { class: 'row-title', text: 'Zavlažování' }),
@@ -621,8 +696,10 @@ async function viewStations() {
 
 // ------------------------------------------------------------------ radar
 
-const RADAR_META = 'https://api.rainviewer.com/public/weather-maps.json';
-const RADAR_FRAMES = 7;            // poslední hodina po 10 min (RainViewer má limit 100 dotazů/min)
+// Radar: primárně ČHMÚ přes náš server (ostřejší, české radary, výhled 60 min),
+// při výpadku ČHMÚ záloha RainViewer (jen minulost, hrubší).
+const RAINVIEWER_META = 'https://api.rainviewer.com/public/weather-maps.json';
+const RAINVIEWER_FRAMES = 7;       // poslední hodina po 10 min (limit 100 dotazů/min)
 const CZ_CENTER = [49.8, 15.5];
 let radar = null;                  // { map, timer } aktivní mapy, ať jde uklidit
 
@@ -648,13 +725,54 @@ function loadLeaflet() {
   return leafletLoading;
 }
 
+async function chmiFrames(L) {
+  const d = await api('/radar');
+  const bounds = L.latLngBounds(d.bounds);
+  return {
+    source: 'chmi',
+    stale: d.stale,
+    frames: d.frames.map((f) => ({
+      t: f.t, kind: f.kind,
+      layer: L.imageOverlay(f.url, bounds, {
+        opacity: 0, zIndex: 5, interactive: false, className: 'radar-img',
+        attribution: 'Radar © <a href="https://www.chmi.cz/" target="_blank" rel="noopener">ČHMÚ</a>',
+      }),
+    })),
+  };
+}
+
+async function rainviewerFrames(L) {
+  const res = await fetch(RAINVIEWER_META, { cache: 'no-store', referrerPolicy: 'no-referrer' });
+  const meta = await res.json();
+  const past = ((meta.radar && meta.radar.past) || []).slice(-RAINVIEWER_FRAMES);
+  return {
+    source: 'rainviewer',
+    stale: false,
+    frames: past.map((f) => ({
+      t: f.time, kind: 'obs',
+      layer: L.tileLayer(`${meta.host}${f.path}/512/{z}/{x}/{y}/2/1_1.png`, {
+        tileSize: 512, zoomOffset: -1, maxNativeZoom: 8, maxZoom: 11, opacity: 0, zIndex: 5,
+        attribution: 'Radar <a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a>',
+      }),
+    })),
+  };
+}
+
+function frameLabel(f, i, frames, lastObs) {
+  if (i === lastObs) return 'nyní';
+  if (i === 0) return timeHM.format(new Date(f.t * 1000));
+  if (i === frames.length - 1 && f.kind === 'fct') return `+${Math.round((f.t - frames[lastObs].t) / 60)} min`;
+  return '';
+}
+
 async function viewRadar() {
   document.title = 'Meteo – radar';
   $app.classList.remove('no-tabbar');
   const [cfg, fc, L] = await Promise.all([api('/config'), loadForecast(), loadLeaflet()]);
   const home = cfg.location ? [cfg.location.lat, cfg.location.lon] : null;
 
-  const mapEl = h('div', { class: 'radar-map', role: 'img', 'aria-label': 'Mapa srážek v okolí domova za poslední hodinu' });
+  const mapEl = h('div', { class: 'radar-map', role: 'img', 'aria-label': 'Mapa srážek v okolí domova' });
+  const eyebrow = h('span', { class: 'eyebrow', text: 'Radar' });
   const status = h('p', { class: 'note radar-status', role: 'status' });
   const playBtn = h('button', { class: 'play', type: 'button', 'aria-label': 'Přehrát animaci' }, icon('play', { size: 'lg' }));
   const framesEl = h('div', { class: 'frames', role: 'group', 'aria-label': 'Čas snímku' });
@@ -662,9 +780,7 @@ async function viewRadar() {
 
   render(
     h('header', { class: 'header' },
-      h('div', { class: 'header-titles' },
-        h('span', { class: 'eyebrow', text: 'Posledních 60 minut' }),
-        h('h1', { text: 'Radar srážek' }))),
+      h('div', { class: 'header-titles' }, eyebrow, h('h1', { text: 'Radar srážek' }))),
     mapEl,
     h('div', { class: 'radar-controls' }, playBtn, framesEl),
     status,
@@ -677,7 +793,7 @@ async function viewRadar() {
 
   stopRadar();
   const map = L.map(mapEl, {
-    center: home || CZ_CENTER, zoom: home ? 8 : 6, minZoom: 5, maxZoom: 11,
+    center: home || CZ_CENTER, zoom: home ? 8 : 7, minZoom: 5, maxZoom: 11,
     zoomControl: false, attributionControl: true,
   });
   map.attributionControl.setPrefix(false);
@@ -693,44 +809,55 @@ async function viewRadar() {
     for (const km of [10, 25]) {
       L.circle(home, { radius: km * 1000, interactive: false, color: '#7d8896', weight: 1, opacity: 0.7, dashArray: '3 6', fill: false }).addTo(map);
     }
-    L.circleMarker(home, { radius: 6, interactive: false, color: '#0e1217', weight: 2, fillColor: '#7cc4f2', fillOpacity: 1 }).addTo(map);
+    L.circleMarker(home, { radius: 6, interactive: false, color: '#0e1217', weight: 2, fillColor: '#7cc4f2', fillOpacity: 1, pane: 'markerPane' }).addTo(map);
   }
 
-  let meta;
+  let set = null;
   try {
-    const res = await fetch(RADAR_META, { cache: 'no-store', referrerPolicy: 'no-referrer' });
-    meta = await res.json();
-  } catch (_) {
+    set = await chmiFrames(L);
+    if (!set.frames.length) set = null;
+  } catch (ex) {
+    if (ex instanceof AuthError) throw ex;
+  }
+  if (!set) {
+    try { set = await rainviewerFrames(L); } catch (_) { set = null; }
+  }
+  if (!radar || radar.map !== map) return;   // mezitím odešel jinam
+  if (!set || !set.frames.length) {
     status.textContent = 'Radar je teď nedostupný. Zkus to za chvíli.';
     return;
   }
-  if (!radar || radar.map !== map) return;   // mezitím odešel jinam
 
-  const past = ((meta.radar && meta.radar.past) || []).slice(-RADAR_FRAMES);
-  if (!past.length) { status.textContent = 'Radar teď neposkytuje žádné snímky.'; return; }
+  const { frames } = set;
+  const lastObs = frames.map((f) => f.kind).lastIndexOf('obs');
+  const hasFct = frames.some((f) => f.kind === 'fct');
+  eyebrow.textContent = set.source === 'chmi'
+    ? (hasFct ? 'ČHMÚ · hodina zpět a výhled' : 'ČHMÚ · posledních 60 minut')
+    : 'RainViewer · posledních 60 minut (ČHMÚ nedostupný)';
 
-  const layers = past.map((f) => L.tileLayer(`${meta.host}${f.path}/512/{z}/{x}/{y}/2/1_1.png`, {
-    tileSize: 512, zoomOffset: -1, maxNativeZoom: 8, maxZoom: 11, opacity: 0, zIndex: 5,
-    attribution: 'Radar <a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a>',
-  }));
+  // ČHMÚ snímky jsou malé – načíst všechny hned, ať animace neblikne
+  if (set.source === 'chmi') frames.forEach((f) => f.layer.addTo(map));
+
   let current = -1;
-  const buttons = past.map((f, i) => {
-    const label = i === past.length - 1 ? 'nyní' : timeHM.format(new Date(f.time * 1000));
-    return h('button', {
-      type: 'button', 'aria-pressed': 'false', 'aria-label': `Snímek ${timeHM.format(new Date(f.time * 1000))}`,
-      onclick: () => { stop(); show(i); },
-    }, h('span', { class: 'bar' }), h('span', { class: 'lbl', text: label }));
-  });
+  const buttons = frames.map((f, i) => h('button', {
+    type: 'button', class: f.kind === 'fct' ? 'fct' : '', 'aria-pressed': 'false',
+    'aria-label': `${f.kind === 'fct' ? 'Výhled na' : 'Snímek'} ${timeHM.format(new Date(f.t * 1000))}`,
+    onclick: () => { stop(); show(i); },
+  }, h('span', { class: 'bar' }), h('span', { class: 'lbl', text: frameLabel(f, i, frames, lastObs) })));
   framesEl.replaceChildren(...buttons);
 
   function show(i) {
-    if (!map.hasLayer(layers[i])) layers[i].addTo(map);
-    layers[i].setOpacity(0.75);
-    if (current >= 0 && current !== i) layers[current].setOpacity(0);
+    const f = frames[i];
+    if (!map.hasLayer(f.layer)) f.layer.addTo(map);
+    f.layer.setOpacity(0.8);
+    if (current >= 0 && current !== i) frames[current].layer.setOpacity(0);
     if (current >= 0) buttons[current].setAttribute('aria-pressed', 'false');
     buttons[i].setAttribute('aria-pressed', 'true');
     current = i;
-    status.textContent = `Snímek z ${timeHM.format(new Date(past[i].time * 1000))}`;
+    const at = timeHM.format(new Date(f.t * 1000));
+    status.textContent = f.kind === 'fct'
+      ? `Výhled na ${at} · extrapolace pohybu, ne vývoje srážek`
+      : `Snímek z ${at}${set.stale ? ' · ČHMÚ teď neodpovídá, poslední dostupný stav' : ''}`;
   }
   function stop() {
     clearInterval(radar && radar.timer);
@@ -743,9 +870,9 @@ async function viewRadar() {
     playBtn.replaceChildren(icon('pause', { size: 'lg' }));
     playBtn.setAttribute('aria-label', 'Zastavit animaci');
     show(0);
-    radar.timer = setInterval(() => show((current + 1) % past.length), 700);
+    radar.timer = setInterval(() => show((current + 1) % frames.length), 600);
   });
-  show(past.length - 1);
+  show(lastObs >= 0 ? lastObs : frames.length - 1);
 }
 
 // ------------------------------------------------------------------ router

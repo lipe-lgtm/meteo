@@ -88,8 +88,19 @@ def close_db(_exc=None):
         conn.close()
 
 
+# Sloupce přidané po první verzi (starší databáze se doplní při startu)
+MIGRATIONS = {
+    "stations": {"diag": "TEXT", "diag_at": "INTEGER"},
+}
+
+
 def init_schema(conn):
     conn.executescript(SCHEMA)
+    for table, cols in MIGRATIONS.items():
+        have = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        for col, typ in cols.items():
+            if col not in have:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
     conn.commit()
 
 

@@ -42,6 +42,8 @@ def create_app(config=None):
         LOCATION_LAT=_env_float("METEO_LAT"),
         LOCATION_LON=_env_float("METEO_LON"),
         FORECAST_URL=os.environ.get("METEO_FORECAST_URL", "https://api.open-meteo.com/v1/forecast"),
+        RADAR_URL=os.environ.get(
+            "METEO_RADAR_URL", "https://opendata.chmi.cz/meteorology/weather/radar/composite"),
         MAX_CONTENT_LENGTH=64 * 1024,
         JSON_SORT_KEYS=False,
     )

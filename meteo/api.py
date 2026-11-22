@@ -11,13 +11,17 @@ Aplikace (session cookie po přihlášení):
   GET  /api/v1/history           – průběh jedné veličiny (zprůměrovaný)
   POST /api/v1/relay             – zapnout/vypnout relé
   POST /api/v1/admin/reset       – smazat naměřená data (vyžaduje heslo znovu)
+  GET  /api/v1/config | /forecast – poloha domova, předpověď (Open-Meteo)
+  GET  /api/v1/radar             – snímky radaru ČHMÚ (+ /radar/<id>.png)
 
 Veřejné:
   GET  /api/v1/health            – jestli server žije (bez dat)
 """
+import json
+
 from flask import Blueprint, current_app, g, jsonify, request, session
 
-from . import db, forecast
+from . import db, forecast, radar
 from .auth import limiter, login_required, station_required, verify_user
 
 bp = Blueprint("api", __name__, url_prefix="/api/v1")
@@ -40,7 +44,10 @@ def _num(value):
 
 
 def extract_readings(sensors):
-    """Převede payload ve formátu, který dnes posílá ESP32, na dvojice (veličina, hodnota).
+    """Převede payload ve formátu, který posílá ESP32, na dvojice (veličina, hodnota).
+
+    Vrací (platné, odmítnuté). Odmítnuté = mimo fyzikální rozsah, např. 85 °C,
+    které DS18B20 hlásí, když převod teploty nedoběhl.
 
     Stanice ví, jestli je venkovní nebo vnitřní, takže teplota z bloku
     "outdoor" i "indoor" se ukládá jako "temperature" dané stanice.
@@ -67,15 +74,40 @@ def extract_readings(sensors):
         for key in ("pm1", "pm25", "pm10", "aqi"):
             out.append((key, aq.get(key)))
 
-    clean = []
+    clean, rejected = [], []
     for metric, raw in out:
+        if raw is None:
+            continue                      # senzor nic nenaměřil – to není chyba dat
         val = _num(raw)
-        if val is None:
-            continue
         lo, hi = db.METRICS[metric]
-        if lo <= val <= hi:
+        if val is not None and lo <= val <= hi:
             clean.append((metric, round(val, 2)))
-    return clean
+        else:
+            rejected.append({"metric": metric, "value": val if val is not None else str(raw)[:20]})
+    return clean, rejected
+
+
+DIAG_MAX_BYTES = 2048
+
+
+def sanitize_diag(value, depth=0):
+    """Diagnostika ze stanice: jen malé ploché struktury (čísla, krátké texty).
+
+    Do UI jde přes textContent, ale i tak nechceme ukládat cokoli, co stanice pošle.
+    """
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, (int, float)):
+        return _num(value)
+    if isinstance(value, str):
+        return value[:120]
+    if isinstance(value, dict) and depth < 3:
+        out = {}
+        for k, v in list(value.items())[:24]:
+            if isinstance(k, str) and k:
+                out[k[:32]] = sanitize_diag(v, depth + 1)
+        return out
+    return None
 
 
 def _client_ip():
@@ -91,16 +123,24 @@ def ingest():
     if body is None:
         return jsonify(error="invalid_json"), 400
 
-    readings = extract_readings(body.get("sensors"))
+    readings, rejected = extract_readings(body.get("sensors"))
     ts = db.now()
+    if rejected:
+        current_app.logger.warning("stanice %s: odmítnuté hodnoty %s", g.station_id, rejected)
+
+    diag = sanitize_diag(body.get("diag")) if isinstance(body.get("diag"), dict) else None
+    stored = {"station": diag, "rejected": rejected}
+    blob = json.dumps(stored, ensure_ascii=False, separators=(",", ":"))
+    if len(blob.encode()) > DIAG_MAX_BYTES:
+        blob = json.dumps({"station": None, "rejected": rejected[:8], "too_big": True})
     conn = db.get_db()
     conn.executemany(
         "INSERT INTO readings (station_id, ts, metric, value) VALUES (?, ?, ?, ?)",
         [(g.station_id, ts, m, v) for m, v in readings],
     )
     conn.execute(
-        "UPDATE stations SET last_seen = ?, last_uptime = ? WHERE id = ?",
-        (ts, _num(body.get("uptime")), g.station_id),
+        "UPDATE stations SET last_seen = ?, last_uptime = ?, diag = ?, diag_at = ? WHERE id = ?",
+        (ts, _num(body.get("uptime")), blob, ts, g.station_id),
     )
     reported = body.get("relay_state")
     if reported in (0, 1):
@@ -111,7 +151,7 @@ def ingest():
             (g.station_id, reported, ts),
         )
     conn.commit()
-    return jsonify(ok=True, stored=len(readings))
+    return jsonify(ok=True, stored=len(readings), rejected=rejected)
 
 
 @bp.get("/station/relay")
@@ -163,13 +203,20 @@ def me():
 
 # ------------------------------------------------------------------ data pro aplikaci
 
+def _load_diag(blob):
+    try:
+        return json.loads(blob) if blob else None
+    except ValueError:
+        return None
+
+
 @bp.get("/stations")
 @login_required
 def stations():
     now = db.now()
     offline_after = current_app.config["STATION_OFFLINE_AFTER"]
     rows = db.get_db().execute(
-        """SELECT s.id, s.name, s.last_seen, s.last_uptime,
+        """SELECT s.id, s.name, s.last_seen, s.last_uptime, s.diag, s.diag_at,
                   r.desired_state, r.reported_state
            FROM stations s LEFT JOIN relays r ON r.station_id = s.id
            ORDER BY s.id"""
@@ -184,6 +231,8 @@ def stations():
                 "online": r["last_seen"] is not None and now - r["last_seen"] <= offline_after,
                 "uptime": r["last_uptime"],
                 "relay": {"desired": r["desired_state"], "reported": r["reported_state"]},
+                "diag": _load_diag(r["diag"]),
+                "diag_at": r["diag_at"],
             }
             for r in rows
         ],
@@ -312,3 +361,34 @@ def admin_reset():
 @bp.get("/health")
 def health():
     return jsonify(ok=True, now=db.now())
+
+
+@bp.get("/radar")
+@login_required
+def radar_frames():
+    """Snímky radaru ČHMÚ: poslední hodina + extrapolace na hodinu dopředu."""
+    try:
+        frames, stale = radar.get_frames(current_app.config["RADAR_URL"])
+    except Exception as exc:  # noqa: BLE001
+        current_app.logger.warning("Radar ČHMÚ nedostupný: %s", exc)
+        return jsonify(error="radar_unavailable"), 503
+    w, s, e, n = radar.DATA_EXTENT
+    return jsonify(
+        source="ČHMÚ",
+        attribution=radar.ATTRIBUTION,
+        bounds=[[s, w], [n, e]],
+        stale=stale,
+        frames=[{**f, "url": f"/api/v1/radar/{f['id']}.png"} for f in frames],
+    )
+
+
+@bp.get("/radar/<frame_id>.png")
+@login_required
+def radar_image(frame_id):
+    png = radar.get_png(frame_id)
+    if png is None:
+        return jsonify(error="not_found"), 404
+    resp = current_app.response_class(png, mimetype="image/png")
+    # obsah snímku se pod stejným jménem nikdy nemění
+    resp.headers["Cache-Control"] = "private, max-age=86400, immutable"
+    return resp
