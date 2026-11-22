@@ -108,7 +108,7 @@ ok "doména $DOMAIN · LAN $LAN_NET · VPN $WG_NET · porty $APP_PORT / $STATION
 IFACE=$(ip -4 route show default | awk '{print $5; exit}')
 GATEWAY=$(ip -4 route show default | awk '{print $3; exit}')
 PI_IP=$(ip -4 -o addr show dev "$IFACE" | awk '{print $4; exit}' | cut -d/ -f1)
-WG_IP=$(ip -4 -o addr show wg0 2>/dev/null | awk '{print $4; exit}' | cut -d/ -f1)
+WG_IP=$(ip -4 -o addr show wg0 2>/dev/null | awk '{print $4; exit}' | cut -d/ -f1 || true)  # bez VPN prázdné
 
 if [[ -z ${LOCAL_DNS:-} ]]; then
     echo
@@ -143,7 +143,9 @@ need=()
 python3 -c 'import ensurepip' 2>/dev/null || need+=(python3-venv)
 command -v certbot >/dev/null || need+=(certbot python3-certbot-apache)
 if [[ $LOCAL_DNS -eq 1 ]]; then
-    command -v dnsmasq >/dev/null || need+=(dnsmasq)
+    # Pozor: Raspberry Pi OS má kvůli NetworkManageru jen dnsmasq-base (program bez
+    # služby a bez /etc/dnsmasq.d), proto se ptáme na balíček, ne na příkaz.
+    dpkg-query -W -f='${Status}' dnsmasq 2>/dev/null | grep -q "install ok installed" || need+=(dnsmasq)
     command -v dig >/dev/null || need+=(dnsutils)
 fi
 if ((${#need[@]})); then
@@ -279,6 +281,7 @@ if [[ $LOCAL_DNS -eq 1 ]]; then
     } > "$HOSTS_FILE"
     chmod 644 "$HOSTS_FILE"
 
+    install -d -m 755 "$(dirname "$DNS_CONF")"
     {
         echo "# Spravuje meteo install.sh – ručně neupravovat, přepíše se."
         echo "# Odpovídá jen v domácí síti a ve VPN; zbytek dotazů posílá dál."
