@@ -3,6 +3,15 @@
 # Meteo vedle Nextcloudu na stejném Apache.
 
 # ------------------------------------------------------------
+# 0) http:// -> https://  (jinak by meteo.… na portu 80 obsloužil Nextcloud)
+#    Výjimka pro /.well-known/acme-challenge/, ať funguje obnova certifikátu.
+# ------------------------------------------------------------
+<VirtualHost *:80>
+    ServerName __DOMAIN__
+    RedirectMatch permanent "^/(?!\.well-known/acme-challenge/)(.*)$" "https://__DOMAIN__/$1"
+</VirtualHost>
+
+# ------------------------------------------------------------
 # 1) Aplikace přes HTTPS – jen z domácí sítě a z VPN
 # ------------------------------------------------------------
 <VirtualHost *:443>

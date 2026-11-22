@@ -210,6 +210,17 @@ fi
 systemctl reload apache2
 ok "web https://$DOMAIN a vstup pro stanice na portu $STATION_PORT"
 
+# ------------------------------------------------------------------ 8) firewall
+if command -v ufw >/dev/null && ufw status | grep -q "^Status: active"; then
+    say "Firewall (ufw)"
+    ufw allow from "$LAN_NET" to any port "$STATION_PORT" proto tcp comment "meteo stanice" >/dev/null
+    ok "port $STATION_PORT povolen pro $LAN_NET"
+    if ufw status | grep -E "^$STATION_PORT(/tcp)? +ALLOW +Anywhere" >/dev/null; then
+        warn "port $STATION_PORT je navíc otevřený odkudkoli. Apache sice cizí IP odmítne,"
+        warn "ale můžeš to zúžit:  sudo ufw delete allow $STATION_PORT"
+    fi
+fi
+
 # ------------------------------------------------------------------ hotovo
 iface=$(ip -4 route show default | awk '{print $5; exit}')
 PI_IP=$(ip -4 -o addr show dev "$iface" | awk '{print $4; exit}' | cut -d/ -f1)

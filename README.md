@@ -45,6 +45,7 @@ a Nextcloud ani rádio nijak neovlivní.
 | databáze | `/var/lib/meteo/meteo.db`, účet do aplikace, API klíč stanice |
 | služba | systemd `meteo` s omezenými právy + denní úklid starých dat |
 | Apache | certifikát přes certbot (jen poprvé), web pro LAN/VPN, port 8088 pro stanice |
+| firewall | když běží ufw, povolí port 8088 jen z domácí sítě |
 
 ## ESP32
 
