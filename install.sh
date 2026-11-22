@@ -218,8 +218,17 @@ ok "běží na 127.0.0.1:$APP_PORT"
 # ------------------------------------------------------------------ 7) Apache
 say "Apache"
 for mod in ssl proxy proxy_http headers; do a2enmod -q "$mod" >/dev/null; done
-install -d -m 755 "$WEB_DIR"
-[[ -f $WEB_DIR/index.html ]] || cp "$SRC/deploy/placeholder.html" "$WEB_DIR/index.html"
+# Aplikace: připravit vedle a pak vyměnit najednou, ať nikdy neběží napůl nahraná verze
+WEB_VERSION=$(git -C "$SRC" rev-parse --short HEAD 2>/dev/null || date +%s)
+install -d -m 755 "$(dirname "$WEB_DIR")"
+rm -rf "$WEB_DIR.new"
+cp -r "$SRC/web" "$WEB_DIR.new"
+sed -i "s/__VERSION__/$WEB_VERSION/" "$WEB_DIR.new/sw.js"
+chmod -R a+rX "$WEB_DIR.new"
+rm -rf "$WEB_DIR.old"
+[[ -d $WEB_DIR ]] && mv "$WEB_DIR" "$WEB_DIR.old"
+mv "$WEB_DIR.new" "$WEB_DIR"
+rm -rf "$WEB_DIR.old"
 
 if [[ ! -f /etc/letsencrypt/live/$DOMAIN/fullchain.pem ]]; then
     getent hosts "$DOMAIN" >/dev/null || die "Doména $DOMAIN zatím nemá DNS záznam. Přidej u registrátora záznam A na stejnou veřejnou IP jako Nextcloud, chvíli počkej a spusť install.sh znovu."
@@ -252,7 +261,7 @@ fi
 [[ -n $backup ]] && rm -f "$backup"
 rm -f "$OLD_SITE"
 systemctl reload apache2
-ok "web https://$DOMAIN a vstup pro stanice na portu $STATION_PORT"
+ok "aplikace $WEB_VERSION na https://$DOMAIN, vstup pro stanice na portu $STATION_PORT"
 
 # ------------------------------------------------------------------ 8) lokální DNS
 DNS_CONF=/etc/dnsmasq.d/meteo.conf

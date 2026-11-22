@@ -1,7 +1,7 @@
 # Meteo
 
-Backend pro domácí meteostanici: JSON API, přihlášení, API klíče pro stanice.
-Běží na Pi 5 za Apache vedle Nextcloudu. Webová aplikace (PWA) přijde ve fázi 2.
+Domácí meteostanice: backend (JSON API, přihlášení, API klíče pro stanice)
+a mobilní webová aplikace (PWA). Běží na Pi 5 za Apache vedle Nextcloudu.
 
 ```
 ESP32 ──HTTP :8088 (jen LAN, jen 3 cesty)──┐
@@ -67,6 +67,23 @@ Po instalaci zbývá ručně:
 Seznam jmen je v `/etc/meteo/install.conf` (`LOCAL_NAMES`); po úpravě spusť
 `sudo ./install.sh`. Vypnutí: `LOCAL_DNS=0` a znovu install.sh, pak
 `sudo systemctl disable --now dnsmasq`.
+
+## Aplikace
+
+Na telefonu otevři `https://meteo.<doména>` (doma nebo přes VPN) a přihlas se.
+
+- **iPhone:** Safari → Sdílet → *Přidat na plochu*
+- **Android:** Chrome → menu → *Přidat na plochu* / *Instalovat aplikaci*
+
+Pak se spouští z ikony bez lišty prohlížeče. Bez spojení ukáže poslední známá data.
+
+Kód je ve složce `web/` (bez build kroku: HTML, CSS, JavaScript). `install.sh` ho
+nasadí do `/srv/meteo/web` a service workeru dá verzi podle git commitu, takže se
+telefony po aktualizaci samy přepnou na novou verzi. Apache posílá přísnou CSP:
+aplikace načítá jen vlastní soubory (i písmo Inter je lokálně) a mluví jen se svým API.
+
+Pozor na cestu `/icons/`: Apache na Debianu ji globálně přesměrovává na své ikony,
+proto jsou obrázky aplikace v `web/img/`.
 
 ## ESP32
 

@@ -31,6 +31,8 @@
     Header always set X-Content-Type-Options "nosniff"
     Header always set Referrer-Policy "no-referrer"
     Header always set Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    # Aplikace smí načítat jen vlastní soubory a mluvit jen se svým API
+    Header always set Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
     # API -> gunicorn (jen na localhostu)
     ProxyPreserveHost On
@@ -38,13 +40,22 @@
     ProxyPass        /api/ http://127.0.0.1:__APP_PORT__/api/
     ProxyPassReverse /api/ http://127.0.0.1:__APP_PORT__/api/
 
-    # Sem později přijde PWA aplikace (fáze 2)
+    # Aplikace (PWA)
     DocumentRoot /srv/meteo/web
+    AddType application/manifest+json .webmanifest
     <Directory /srv/meteo/web>
         Options -Indexes
         AllowOverride None
         Require ip __LAN_NET__ __WG_NET__
-        FallbackResource /index.html
+        # aplikace směruje přes #, takže žádný fallback: chybějící soubor = poctivá 404
+        # kód a stránka: vždy ověřit novou verzi (ETag), ať se aktualizace projeví hned
+        Header set Cache-Control "no-cache"
+    </Directory>
+    <Directory /srv/meteo/web/fonts>
+        Header set Cache-Control "public, max-age=2592000, immutable"
+    </Directory>
+    <Directory /srv/meteo/web/img>
+        Header set Cache-Control "public, max-age=604800"
     </Directory>
 
     ErrorLog  ${APACHE_LOG_DIR}/meteo_error.log
