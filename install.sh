@@ -16,7 +16,9 @@ ETC_DIR=/etc/meteo
 WEB_DIR=/srv/meteo/web
 CONF="$ETC_DIR/install.conf"
 ENV_FILE="$ETC_DIR/meteo.env"
-SITE=/etc/apache2/sites-available/meteo.conf
+# "zz-" = načte se jako poslední, takže meteo nikdy není výchozí web pro cizí domény
+SITE=/etc/apache2/sites-available/zz-meteo.conf
+OLD_SITE=/etc/apache2/sites-available/meteo.conf   # název do verze b516668
 STATION_ID=outdoor_station
 
 say()  { printf '\n\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -101,7 +103,7 @@ say "Kontrola portů"
 if port_busy "$APP_PORT" && ! systemctl is-active -q meteo; then
     die "Port $APP_PORT už používá jiný program (sudo ss -tlnp | grep :$APP_PORT). Změň APP_PORT v $CONF a spusť znovu."
 fi
-if port_busy "$STATION_PORT" && ! grep -qs "^Listen $STATION_PORT" "$SITE"; then
+if port_busy "$STATION_PORT" && ! grep -qs "^Listen $STATION_PORT" "$SITE" "$OLD_SITE"; then
     die "Port $STATION_PORT už používá jiný program (sudo ss -tlnp | grep :$STATION_PORT). Změň STATION_PORT v $CONF a spusť znovu."
 fi
 ok "volné"
@@ -193,20 +195,27 @@ ok "certifikát pro $DOMAIN"
 
 backup=""
 if [[ -f $SITE ]]; then backup=$(mktemp); cp "$SITE" "$backup"; fi
+old_enabled=0
+if [[ -f /etc/apache2/sites-enabled/meteo.conf ]]; then
+    a2dissite -q meteo >/dev/null
+    old_enabled=1
+fi
 sed -e "s#__DOMAIN__#$DOMAIN#g" \
     -e "s#__LAN_NET__#$LAN_NET#g" \
     -e "s#__WG_NET__#$WG_NET#g" \
     -e "s#__APP_PORT__#$APP_PORT#g" \
     -e "s#__STATION_PORT__#$STATION_PORT#g" \
     "$SRC/deploy/apache/meteo.conf.in" > "$SITE"
-a2ensite -q meteo >/dev/null
+a2ensite -q zz-meteo >/dev/null
 
 if ! apache2ctl configtest >/dev/null 2>&1; then
     apache2ctl configtest || true
-    if [[ -n $backup ]]; then cp "$backup" "$SITE"; else a2dissite -q meteo >/dev/null; rm -f "$SITE"; fi
+    if [[ -n $backup ]]; then cp "$backup" "$SITE"; else a2dissite -q zz-meteo >/dev/null; rm -f "$SITE"; fi
+    [[ $old_enabled -eq 1 ]] && a2ensite -q meteo >/dev/null
     die "Nová konfigurace Apache neprošla kontrolou. Vrátil jsem předchozí stav – Nextcloud i rádio běží beze změny."
 fi
 [[ -n $backup ]] && rm -f "$backup"
+rm -f "$OLD_SITE"
 systemctl reload apache2
 ok "web https://$DOMAIN a vstup pro stanice na portu $STATION_PORT"
 

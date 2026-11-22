@@ -1,4 +1,4 @@
-# Šablona – install.sh z ní vyrobí /etc/apache2/sites-available/meteo.conf
+# Šablona – install.sh z ní vyrobí /etc/apache2/sites-available/zz-meteo.conf
 #
 # Meteo vedle Nextcloudu na stejném Apache.
 
