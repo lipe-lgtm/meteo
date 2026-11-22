@@ -45,7 +45,28 @@ a Nextcloud ani rádio nijak neovlivní.
 | databáze | `/var/lib/meteo/meteo.db`, účet do aplikace, API klíč stanice |
 | služba | systemd `meteo` s omezenými právy + denní úklid starých dat |
 | Apache | certifikát přes certbot (jen poprvé), web pro LAN/VPN, port 8088 pro stanice |
-| firewall | když běží ufw, povolí port 8088 jen z domácí sítě |
+| lokální DNS | dnsmasq: doma i přes VPN míří doména přímo na Pi (viz níže) |
+| firewall | když běží ufw, povolí port 8088 (a DNS) jen z domácí sítě a VPN |
+
+## Lokální DNS (split DNS)
+
+Router bez NAT loopbacku neumí z domácí sítě otočit požadavek na veřejnou IP
+zpátky na Pi a místo toho ukáže svou administraci. Proto install.sh (po souhlasu)
+spustí na Pi dnsmasq, který odpovídá:
+
+- v domácí síti: `meteo.<doména>` (a nadřazená doména s `www`, pokud veřejně
+  míří na stejnou IP – typicky Nextcloud) → LAN IP Pi
+- ve VPN: stejná jména → VPN adresa Pi
+- všechno ostatní přepošle routeru, případně 1.1.1.1
+
+Po instalaci zbývá ručně:
+1. **Router → DHCP → DNS server** = LAN IP Pi (bez záložního, jinak by zařízení
+   občas dostala veřejnou IP). Na telefonu se pak odpoj a připoj k Wi-Fi.
+2. **WireGuard klienti** – do sekce `[Interface]` přidej `DNS = <VPN IP Pi>`.
+
+Seznam jmen je v `/etc/meteo/install.conf` (`LOCAL_NAMES`); po úpravě spusť
+`sudo ./install.sh`. Vypnutí: `LOCAL_DNS=0` a znovu install.sh, pak
+`sudo systemctl disable --now dnsmasq`.
 
 ## ESP32
 

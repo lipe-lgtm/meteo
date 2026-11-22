@@ -41,6 +41,13 @@ ask() {  # ask PROMĚNNÁ "otázka" [výchozí]
 net_of() { python3 -c 'import ipaddress,sys; print(ipaddress.ip_interface(sys.argv[1]).network)' "$1"; }
 valid_net() { python3 -c 'import ipaddress,sys; ipaddress.ip_network(sys.argv[1], strict=False)' "$1" 2>/dev/null; }
 port_busy() { ss -Htln "sport = :$1" | grep -q .; }
+dns53_foreign() { ss -Hlnup "sport = :53" 2>/dev/null; ss -Hlntp "sport = :53" 2>/dev/null; } # kdo drží port 53
+public_a() {  # veřejná IPv4 adresa jména (ne odpověď našeho lokálního DNS)
+    local ip=""
+    command -v dig >/dev/null && ip=$(dig +short +time=2 +tries=1 A "$1" @1.1.1.1 2>/dev/null | grep -E '^[0-9.]+$' | head -1)
+    [[ -n $ip ]] || ip=$(getent ahostsv4 "$1" 2>/dev/null | awk '{print $1; exit}')
+    printf '%s' "$ip"
+}
 manage() { runuser -u meteo -- /usr/local/bin/meteo-manage "$@"; }
 
 health() {
@@ -98,6 +105,20 @@ else
 fi
 ok "doména $DOMAIN · LAN $LAN_NET · VPN $WG_NET · porty $APP_PORT / $STATION_PORT"
 
+IFACE=$(ip -4 route show default | awk '{print $5; exit}')
+GATEWAY=$(ip -4 route show default | awk '{print $3; exit}')
+PI_IP=$(ip -4 -o addr show dev "$IFACE" | awk '{print $4; exit}' | cut -d/ -f1)
+WG_IP=$(ip -4 -o addr show wg0 2>/dev/null | awk '{print $4; exit}' | cut -d/ -f1)
+
+if [[ -z ${LOCAL_DNS:-} ]]; then
+    echo
+    echo "    Lokální DNS: doma (a přes VPN) bude $DOMAIN mířit přímo na Pi,"
+    echo "    takže nepotřebuješ interní IP ani NAT loopback v routeru."
+    ask LOCAL_DNS_ANSWER "Zapnout lokální DNS na Pi? (a/n)" "a"
+    case $LOCAL_DNS_ANSWER in a|A|ano|y|Y|yes) LOCAL_DNS=1 ;; *) LOCAL_DNS=0 ;; esac
+    echo "LOCAL_DNS=$LOCAL_DNS" >> "$CONF"
+fi
+
 # ------------------------------------------------------------------ 2) porty
 say "Kontrola portů"
 if port_busy "$APP_PORT" && ! systemctl is-active -q meteo; then
@@ -106,6 +127,14 @@ fi
 if port_busy "$STATION_PORT" && ! grep -qs "^Listen $STATION_PORT" "$SITE" "$OLD_SITE"; then
     die "Port $STATION_PORT už používá jiný program (sudo ss -tlnp | grep :$STATION_PORT). Změň STATION_PORT v $CONF a spusť znovu."
 fi
+if [[ $LOCAL_DNS -eq 1 ]]; then
+    holder=$(dns53_foreign | grep -v '"dnsmasq"' || true)
+    if [[ -n $holder ]]; then
+        LOCAL_DNS=0
+        warn "port 53 (DNS) už používá jiný program – lokální DNS přeskakuji:"
+        warn "$(echo "$holder" | grep -o 'users:(("[^"]*' | head -1 | sed 's/users:(("//')"
+    fi
+fi
 ok "volné"
 
 # ------------------------------------------------------------------ 3) balíčky
@@ -113,6 +142,10 @@ say "Systémové balíčky"
 need=()
 python3 -c 'import ensurepip' 2>/dev/null || need+=(python3-venv)
 command -v certbot >/dev/null || need+=(certbot python3-certbot-apache)
+if [[ $LOCAL_DNS -eq 1 ]]; then
+    command -v dnsmasq >/dev/null || need+=(dnsmasq)
+    command -v dig >/dev/null || need+=(dnsutils)
+fi
 if ((${#need[@]})); then
     apt-get update -qq
     apt-get install -y -qq "${need[@]}"
@@ -219,11 +252,80 @@ rm -f "$OLD_SITE"
 systemctl reload apache2
 ok "web https://$DOMAIN a vstup pro stanice na portu $STATION_PORT"
 
-# ------------------------------------------------------------------ 8) firewall
+# ------------------------------------------------------------------ 8) lokální DNS
+DNS_CONF=/etc/dnsmasq.d/meteo.conf
+HOSTS_FILE=$ETC_DIR/local-hosts
+DNS_OK=0
+if [[ $LOCAL_DNS -eq 1 ]]; then
+    say "Lokální DNS (dnsmasq)"
+    if [[ -z ${LOCAL_NAMES:-} ]]; then
+        # Kromě meteo i nadřazená doména (Nextcloud) – ale jen jména, která
+        # veřejně míří na stejnou IP jako meteo, ať nepřesměrujeme nic cizího.
+        target=$(public_a "$DOMAIN")
+        LOCAL_NAMES=$DOMAIN
+        parent=${DOMAIN#*.}
+        if [[ $parent == *.* && -n $target ]]; then
+            for n in "$parent" "www.$parent"; do
+                [[ $(public_a "$n") == "$target" ]] && LOCAL_NAMES="$LOCAL_NAMES $n"
+            done
+        fi
+        echo "LOCAL_NAMES=\"$LOCAL_NAMES\"" >> "$CONF"
+    fi
+
+    {
+        echo "# Spravuje meteo install.sh – ručně neupravovat, přepíše se."
+        echo "$PI_IP $LOCAL_NAMES"
+        [[ -n $WG_IP ]] && echo "$WG_IP $LOCAL_NAMES"
+    } > "$HOSTS_FILE"
+    chmod 644 "$HOSTS_FILE"
+
+    {
+        echo "# Spravuje meteo install.sh – ručně neupravovat, přepíše se."
+        echo "# Odpovídá jen v domácí síti a ve VPN; zbytek dotazů posílá dál."
+        echo "interface=$IFACE"
+        echo "interface=wg0"
+        echo "bind-dynamic"
+        echo "no-resolv"
+        echo "server=$GATEWAY"
+        echo "server=1.1.1.1"
+        echo "domain-needed"
+        echo "bogus-priv"
+        echo "cache-size=1000"
+        echo "# Doma vrátí LAN IP Pi, přes VPN jeho VPN adresu"
+        echo "localise-queries"
+        echo "addn-hosts=$HOSTS_FILE"
+    } > "$DNS_CONF"
+
+    systemctl enable -q dnsmasq
+    systemctl restart dnsmasq || true
+    sleep 1
+    answer=$(dig +short +time=2 +tries=2 A "$DOMAIN" @"$PI_IP" 2>/dev/null | head -1)
+    if [[ $answer == "$PI_IP" ]]; then
+        DNS_OK=1
+        ok "$LOCAL_NAMES → $PI_IP (doma)${WG_IP:+ / $WG_IP (VPN)}"
+        if [[ -z $(dig +short +time=3 +tries=1 A debian.org @"$PI_IP" 2>/dev/null) ]]; then
+            warn "lokální jména fungují, ale přeposílání ostatních dotazů ne – zkontroluj spojení na $GATEWAY"
+        fi
+    else
+        rm -f "$DNS_CONF"
+        systemctl stop dnsmasq 2>/dev/null || true
+        systemctl disable -q dnsmasq 2>/dev/null || true
+        warn "dnsmasq neodpověděl správně ($answer) – lokální DNS vypnuto, zbytek instalace je v pořádku."
+        warn "Detail:  sudo journalctl -u dnsmasq -n 30"
+    fi
+fi
+
+# ------------------------------------------------------------------ 9) firewall
 if command -v ufw >/dev/null && ufw status | grep -q "^Status: active"; then
     say "Firewall (ufw)"
     ufw allow from "$LAN_NET" to any port "$STATION_PORT" proto tcp comment "meteo stanice" >/dev/null
     ok "port $STATION_PORT povolen pro $LAN_NET"
+    if [[ $DNS_OK -eq 1 ]]; then
+        for net in "$LAN_NET" "$WG_NET"; do
+            ufw allow from "$net" to any port 53 comment "meteo dns" >/dev/null
+        done
+        ok "DNS (port 53) povoleno pro $LAN_NET a $WG_NET"
+    fi
     if ufw status | grep -E "^$STATION_PORT(/tcp)? +ALLOW +Anywhere" >/dev/null; then
         warn "port $STATION_PORT je navíc otevřený odkudkoli. Apache sice cizí IP odmítne,"
         warn "ale můžeš to zúžit:  sudo ufw delete allow $STATION_PORT"
@@ -231,9 +333,6 @@ if command -v ufw >/dev/null && ufw status | grep -q "^Status: active"; then
 fi
 
 # ------------------------------------------------------------------ hotovo
-iface=$(ip -4 route show default | awk '{print $5; exit}')
-PI_IP=$(ip -4 -o addr show dev "$iface" | awk '{print $4; exit}' | cut -d/ -f1)
-
 printf '\n\033[1;32m✓ Hotovo.\033[0m\n\n'
 echo "  Aplikace (z domova nebo přes VPN):  https://$DOMAIN"
 echo
@@ -248,5 +347,14 @@ else
 fi
 echo
 echo "  Displej s RSS (Pico WH):  TEMP_SERVER_URL = \"http://$PI_IP:$STATION_PORT\""
+if [[ $DNS_OK -eq 1 ]]; then
+    echo
+    printf '  \033[1mLokální DNS – zbývá nastavit:\033[0m\n'
+    echo "    • Router, DHCP: jako DNS server rozdávej $PI_IP (bez záložního)."
+    echo "      Pak se na telefonu odpoj a připoj k Wi-Fi."
+    [[ -n $WG_IP ]] && echo "    • WireGuard klienti: do sekce [Interface] přidej  DNS = $WG_IP"
+    echo "    • Test z laptopu:  nslookup $DOMAIN $PI_IP"
+fi
+echo
 echo "  Příští aktualizace:       git pull && sudo ./install.sh"
 echo
