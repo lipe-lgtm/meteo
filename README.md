@@ -85,6 +85,20 @@ aplikace načítá jen vlastní soubory (i písmo Inter je lokálně) a mluví j
 Pozor na cestu `/icons/`: Apache na Debianu ji globálně přesměrovává na své ikony,
 proto jsou obrázky aplikace v `web/img/`.
 
+## Předpověď a radar
+
+- **Předpověď:** [Open-Meteo](https://open-meteo.com/) (zdarma pro nekomerční použití,
+  data CC BY 4.0). Ptá se server, poloha domova tak zůstává na Pi; odpověď drží
+  15 minut a při výpadku vrátí poslední známou. Srážky na příští 3 hodiny jsou
+  z 15minutové předpovědi.
+- **Radar:** [RainViewer](https://www.rainviewer.com/) – poslední hodina snímků
+  (od 2026 jen minulé snímky, max. zoom 7, 100 dotazů/min z jedné IP).
+- **Mapa:** OpenStreetMap, ztmavená filtrem. Podle pravidel OSM aplikace posílá
+  Referer, zobrazuje atribuci a dlaždice neukládá pro offline.
+
+Polohu se `install.sh` zeptá jednou (souřadnice stačí vložit z Mapy.cz).
+Změna: smaž řádek `LOCATION` v `/etc/meteo/install.conf` a spusť skript znovu.
+
 ## ESP32
 
 Ve složce `firmware/`: `main.py` a `config.example.py`. Zkopíruj `config.example.py`

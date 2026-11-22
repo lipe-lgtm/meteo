@@ -49,6 +49,20 @@ public_a() {  # veřejná IPv4 adresa jména (ne odpověď našeho lokálního D
     printf '%s' "$ip"
 }
 manage() { runuser -u meteo -- /usr/local/bin/meteo-manage "$@"; }
+set_env() {  # set_env KLÍČ HODNOTA – nastaví nebo přidá řádek v meteo.env, zbytek nechá
+    if grep -q "^$1=" "$ENV_FILE"; then sed -i "s#^$1=.*#$1=$2#" "$ENV_FILE"; else echo "$1=$2" >> "$ENV_FILE"; fi
+}
+parse_coords() {  # "50.0875, 14.4214" (jak to zkopíruje mapy.cz / Google) -> "50.0875 14.4214"
+    python3 - "$1" <<'PY'
+import re, sys
+nums = re.findall(r"-?\d+(?:[.,]\d+)?", sys.argv[1].replace(", ", " "))
+vals = [float(n.replace(",", ".")) for n in nums]
+if len(vals) == 2 and -90 <= vals[0] <= 90 and -180 <= vals[1] <= 180:
+    print(f"{vals[0]:.4f} {vals[1]:.4f}")
+else:
+    sys.exit(1)
+PY
+}
 
 health() {
     python3 - "$1" <<'PY'
@@ -109,6 +123,20 @@ IFACE=$(ip -4 route show default | awk '{print $5; exit}')
 GATEWAY=$(ip -4 route show default | awk '{print $3; exit}')
 PI_IP=$(ip -4 -o addr show dev "$IFACE" | awk '{print $4; exit}' | cut -d/ -f1)
 WG_IP=$(ip -4 -o addr show wg0 2>/dev/null | awk '{print $4; exit}' | cut -d/ -f1 || true)  # bez VPN prázdné
+
+if [[ -z ${LOCATION:-} ]]; then
+    echo
+    echo "    Poloha domova pro předpověď počasí a radar."
+    echo "    Na mapy.cz klikni pravým tlačítkem na dům → zkopíruj souřadnice a vlož je sem."
+    while true; do
+        read -rp "    Souřadnice (Enter = zatím bez předpovědi): " coords_in
+        if [[ -z $coords_in ]]; then LOCATION=none; break; fi
+        if parsed=$(parse_coords "$coords_in"); then LOCATION="${parsed// /,}"; break; fi
+        warn "tomu nerozumím – zkus tvar 50.0875, 14.4214"
+    done
+    echo "LOCATION=$LOCATION" >> "$CONF"
+fi
+[[ $LOCATION == none ]] && ok "předpověď vypnutá (zapneš smazáním řádku LOCATION v $CONF)" || ok "poloha $LOCATION"
 
 if [[ -z ${LOCAL_DNS:-} ]]; then
     echo
@@ -178,6 +206,12 @@ if [[ ! -f $ENV_FILE ]]; then
         -e "s#^METEO_LEGACY_NETS=.*#METEO_LEGACY_NETS=$LAN_NET#" \
         "$SRC/deploy/meteo.env.example" > "$ENV_FILE"
     ok "vytvořen $ENV_FILE s novým tajným klíčem"
+fi
+if [[ $LOCATION != none ]]; then
+    set_env METEO_LAT "${LOCATION%,*}"
+    set_env METEO_LON "${LOCATION#*,}"
+else
+    sed -i '/^METEO_LAT=/d; /^METEO_LON=/d' "$ENV_FILE"
 fi
 chown meteo:meteo "$ENV_FILE"
 chmod 600 "$ENV_FILE"

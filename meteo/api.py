@@ -17,7 +17,7 @@ Veřejné:
 """
 from flask import Blueprint, current_app, g, jsonify, request, session
 
-from . import db
+from . import db, forecast
 from .auth import limiter, login_required, station_required, verify_user
 
 bp = Blueprint("api", __name__, url_prefix="/api/v1")
@@ -237,6 +237,27 @@ def history():
         bucket_seconds=bucket,
         points=[[r["t"], round(r["avg"], 2), r["min"], r["max"]] for r in rows],
     )
+
+
+@bp.get("/config")
+@login_required
+def config():
+    lat, lon = current_app.config["LOCATION_LAT"], current_app.config["LOCATION_LON"]
+    return jsonify(location={"lat": lat, "lon": lon} if lat is not None and lon is not None else None)
+
+
+@bp.get("/forecast")
+@login_required
+def get_forecast():
+    lat, lon = current_app.config["LOCATION_LAT"], current_app.config["LOCATION_LON"]
+    if lat is None or lon is None:
+        return jsonify(error="location_not_set"), 404
+    try:
+        data, stale = forecast.get_forecast(current_app.config["FORECAST_URL"], lat, lon)
+    except Exception as exc:  # noqa: BLE001 – upstream může selhat jakkoli
+        current_app.logger.warning("Předpověď nedostupná: %s", exc)
+        return jsonify(error="forecast_unavailable"), 503
+    return jsonify(stale=stale, source="Open-Meteo", **data)
 
 
 # ------------------------------------------------------------------ ovládání

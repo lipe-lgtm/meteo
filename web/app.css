@@ -230,6 +230,45 @@ a.card:active { background: var(--surface-2); }
 .switch-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
 .note { font-size: 13px; color: var(--text-2); line-height: 1.45; margin: 0; }
 
+/* ---------- předpověď ---------- */
+.source { font-size: 11px; color: var(--text-3); }
+.forecast { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; text-align: center; }
+.fday { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 4px 0; }
+.fname { font-size: 12px; color: var(--text-2); }
+.fday .icon { width: 26px; height: 26px; margin: 2px 0; }
+.fmax { font-size: 15px; }
+.fmin { font-size: 12px; color: var(--text-3); }
+.fprob { font-size: 11px; color: var(--accent); min-height: 14px; }
+
+/* ---------- radar ---------- */
+.radar-map {
+  height: 420px; margin: 0 -20px; background: #121821;
+  border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft);
+}
+.leaflet-container { background: #121821; font-family: inherit; }
+/* OSM je světlá mapa – invertujeme ji do tmavé, ať radar vynikne */
+.basemap { filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.85) saturate(0.35); }
+.leaflet-control-attribution {
+  background: rgba(14, 18, 23, 0.8) !important; color: var(--text-3) !important; font-size: 10px;
+}
+.leaflet-control-attribution a { color: var(--text-2) !important; }
+.radar-controls { display: flex; align-items: center; gap: 12px; }
+.play {
+  flex: none; width: 44px; height: 44px; border-radius: 22px; border: 0;
+  background: var(--accent); color: #0b1520; display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.play .icon { fill: currentColor; stroke: none; }
+.frames { flex: 1; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
+.frames button {
+  height: 44px; border: 0; background: transparent; padding: 0; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px;
+}
+.frames .bar { width: 100%; height: 4px; border-radius: 2px; background: var(--line); }
+.frames .lbl { font-size: 10px; color: var(--text-3); }
+.frames button[aria-pressed="true"] .bar { background: var(--accent); }
+.frames button[aria-pressed="true"] .lbl { color: var(--text); font-weight: 500; }
+.radar-status { min-height: 18px; text-align: center; }
+
 /* ---------- přihlášení ---------- */
 .login { min-height: calc(100vh - 80px); display: flex; flex-direction: column; justify-content: center; gap: 28px; }
 .login-brand { display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; }
@@ -249,7 +288,7 @@ a.card:active { background: var(--surface-2); }
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
   height: calc(var(--tabbar) + var(--safe-bottom));
   padding: 6px 24px var(--safe-bottom);
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
   background: rgba(14, 18, 23, 0.94); border-top: 1px solid var(--line-soft);
   -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
 }

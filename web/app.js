@@ -96,8 +96,28 @@ const ICONS = {
   grid: 'M5 3h3a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM16 3h3a2 2 0 0 1 2 2v1a2 2 0 0 1-2 2h-3a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM16 12h3a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-3a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2zM5 16h3a2 2 0 0 1 2 2v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1a2 2 0 0 1 2-2z',
   station: 'M12 20v-8M8.5 8.5a5 5 0 0 1 7 0M5.6 5.6a9 9 0 0 1 12.8 0M12 10a1 1 0 1 0 0 2 1 1 0 0 0 0-2z',
   thermo: 'M14 14.8V5a2 2 0 1 0-4 0v9.8a4 4 0 1 0 4 0z',
-  water: 'M8 2v4M16 2v4M3 10h18M5 6h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z',
+  radar: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM12 12l6-6',
+  play: 'M8 5.5v13l10.5-6.5z',
+  pause: 'M7 5h3v14H7zM14 5h3v14h-3z',
+  cloud: 'M7 18h10a4 4 0 0 0 .4-8A6 6 0 0 0 6.1 11 3.5 3.5 0 0 0 7 18z',
+  partly: 'M8 3v1.5M3.6 4.6l1 1M2 9h1.5M12.4 4.6l-1 1M5.2 11.6A3.5 3.5 0 1 1 11.6 8M9 19h8a3.5 3.5 0 0 0 .3-7A5 5 0 0 0 8 12.6 3.2 3.2 0 0 0 9 19z',
+  rain: 'M7 15h10a3.5 3.5 0 0 0 .4-7A5.5 5.5 0 0 0 6.6 9 3 3 0 0 0 7 15zM9 18l-1 2M13 18l-1 2M17 18l-1 2',
+  snow: 'M7 14h10a3.5 3.5 0 0 0 .4-7A5.5 5.5 0 0 0 6.6 8 3 3 0 0 0 7 14zM8 18h.01M12 18h.01M16 18h.01M10 21h.01M14 21h.01',
+  storm: 'M7 14h10a3.5 3.5 0 0 0 .4-7A5.5 5.5 0 0 0 6.6 8 3 3 0 0 0 7 14zM13 14l-2 4h3l-2 4',
+  fog: 'M7 12h10a3.5 3.5 0 0 0 .4-7A5.5 5.5 0 0 0 6.6 6 3 3 0 0 0 7 12zM5 16h14M7 20h10',
 };
+
+// WMO kódy počasí (Open-Meteo) -> ikona, barva, popis
+function weatherOf(code) {
+  const c = Number(code);
+  if (c === 0 || c === 1) return { icon: 'sun', color: '#e3b341', text: c === 0 ? 'Jasno' : 'Skoro jasno' };
+  if (c === 2) return { icon: 'partly', color: '#c4ccd5', text: 'Polojasno' };
+  if (c === 45 || c === 48) return { icon: 'fog', color: '#9aa5b1', text: 'Mlha' };
+  if ((c >= 51 && c <= 67) || (c >= 80 && c <= 82)) return { icon: 'rain', color: '#7cc4f2', text: c >= 80 ? 'Přeháňky' : c <= 57 ? 'Mrholení' : 'Déšť' };
+  if ((c >= 71 && c <= 77) || c === 85 || c === 86) return { icon: 'snow', color: '#e7ebf0', text: 'Sněžení' };
+  if (c >= 95) return { icon: 'storm', color: '#e3b341', text: 'Bouřky' };
+  return { icon: 'cloud', color: '#9aa5b1', text: 'Zataženo' };
+}
 
 function icon(name, { size = '', color } = {}) {
   return s('svg', {
@@ -119,7 +139,8 @@ const METRICS = {
 
 function fmtSigned(v, digits) {
   const f = digits ? nf1 : nf0;
-  return (v < 0 ? '−' : '') + f.format(Math.abs(v));
+  const abs = f.format(Math.abs(v));
+  return (v < 0 && /[1-9]/.test(abs) ? '−' : '') + abs;   // −0,4 zaokrouhlené na 0 je „0“, ne „−0“
 }
 
 // Pásma PM2.5 (µg/m³) – stejná jako AQI ve firmwaru
@@ -210,6 +231,7 @@ function tabbar(active) {
   const tab = (href, name, label, key) => h('a', { href, 'aria-current': active === key ? 'page' : null }, icon(name, { size: 'lg' }), h('span', { text: label }));
   return h('nav', { class: 'tabbar', 'aria-label': 'Hlavní navigace' },
     tab('#/', 'grid', 'Přehled', 'home'),
+    tab('#/radar', 'radar', 'Radar', 'radar'),
     tab('#/stanice', 'station', 'Stanice', 'stations'));
 }
 
@@ -273,14 +295,86 @@ function viewLogin() {
 // ------------------------------------------------------------------ přehled
 
 async function loadOverview() {
-  const [latest, stations, temp] = await Promise.all([
+  const [latest, stations, temp, forecast] = await Promise.all([
     api('/latest'),
     api('/stations'),
     api(`/history?station=${OUTDOOR}&metric=temperature&hours=24&points=96`),
+    loadForecast(),
   ]);
-  const data = { latest, stations, temp };
+  const data = { latest, stations, temp, forecast };
   saveCache(data);
   return data;
+}
+
+async function loadForecast() {
+  try {
+    return await api('/forecast');
+  } catch (ex) {
+    if (ex instanceof AuthError) throw ex;
+    return { error: ex.code || 'unavailable' };
+  }
+}
+
+// Srážky v příštích 3 h z 15minutové předpovědi (hodnota = úhrn za předchozích 15 min)
+function nowcast(fc) {
+  if (!fc || fc.error || !fc.nowcast || !fc.nowcast.length) return null;
+  const steps = fc.nowcast.filter((x) => x.precip !== null);
+  if (!steps.length) return null;
+  const temp = fc.hours && fc.hours.length ? fc.hours[0].temp : null;
+  const snowy = temp !== null && temp <= 0.5;
+  const wet = (x) => x.precip >= 0.1;
+  const at = (t) => timeHM.format(new Date((t - 900) * 1000));
+  if (wet(steps[0])) {
+    const end = steps.findIndex((x) => !wet(x));
+    return {
+      wet: true,
+      title: snowy ? 'Právě sněží' : 'Právě prší',
+      sub: end === -1 ? 'Podle předpovědi vydrží další 3 hodiny' : `Mělo by přestat kolem ${at(steps[end].t)}`,
+    };
+  }
+  const first = steps.find(wet);
+  if (first) {
+    return { wet: true, title: `${snowy ? 'Sněžení' : 'Déšť'} kolem ${at(first.t)}`, sub: 'Podle předpovědi na příští 3 hodiny' };
+  }
+  return { wet: false, title: 'Další 3 hodiny bez srážek', sub: 'Podle předpovědi Open-Meteo' };
+}
+
+function forecastCard(fc) {
+  if (!fc || fc.error === 'location_not_set') {
+    return h('div', { class: 'card' },
+      h('h2', { class: 'section-title', text: 'Předpověď' }),
+      h('p', { class: 'note', text: 'Chybí poloha domova. Doplníš ji při dalším spuštění install.sh (smaž řádek LOCATION v /etc/meteo/install.conf).' }));
+  }
+  if (fc.error) {
+    return h('div', { class: 'card' },
+      h('h2', { class: 'section-title', text: 'Předpověď' }),
+      h('p', { class: 'note', text: 'Předpověď je teď nedostupná, zkusím to znovu za chvíli.' }));
+  }
+  const days = fc.days.slice(0, 5);
+  return h('section', { class: 'card', 'aria-label': 'Předpověď na 5 dní' },
+    h('div', { class: 'card-head' },
+      h('h2', { class: 'section-title', text: 'Předpověď' }),
+      h('a', { class: 'source', href: 'https://open-meteo.com/', target: '_blank', rel: 'noopener', text: fc.stale ? 'Open-Meteo · starší data' : 'Open-Meteo' })),
+    h('div', { class: 'forecast' }, days.map((d, i) => {
+      const w = weatherOf(d.code);
+      const name = i === 0 ? 'Dnes' : capitalize(dayShort.format(new Date(d.t * 1000)).replace('.', ''));
+      return h('div', { class: 'fday', 'aria-label': `${name}: ${w.text}, ${fmtSigned(d.tmax, 0)} až ${fmtSigned(d.tmin, 0)} stupňů` },
+        h('span', { class: 'fname', text: name }),
+        icon(w.icon, { size: 'lg', color: w.color }),
+        h('span', { class: 'fmax', text: d.tmax === null ? '–' : `${fmtSigned(Math.round(d.tmax), 0)}°` }),
+        h('span', { class: 'fmin', text: d.tmin === null ? '–' : `${fmtSigned(Math.round(d.tmin), 0)}°` }),
+        h('span', { class: 'fprob', text: d.prob !== null && d.prob >= 30 ? `${nf0.format(d.prob)} %` : '' }));
+    })));
+}
+
+function radarRow(fc) {
+  const nc = nowcast(fc);
+  return h('a', { class: 'card row', href: '#/radar' },
+    h('span', { class: 'row-icon' }, icon(nc && nc.wet ? 'rain' : 'radar', { color: '#7cc4f2' })),
+    h('span', { class: 'row-text' },
+      h('span', { class: 'row-title', text: nc ? nc.title : 'Radar srážek' }),
+      h('span', { class: 'sub', text: nc ? nc.sub : 'Poslední hodina srážek v okolí' })),
+    icon('chevron', { size: 'lg', color: '#7d8896' }));
 }
 
 function todayRange(points) {
@@ -386,6 +480,8 @@ function overviewView(data, { cachedAt } = {}) {
     heroCard(out.temperature, data.temp, now),
     airCard(out, now),
     h('div', { class: 'grid2' }, humidityTile(out.humidity, now), indoorTile(indoor, now)),
+    forecastCard(data.forecast),
+    radarRow(data.forecast),
     lightRow(out.light, now),
     tabbar('home'));
 }
@@ -523,6 +619,135 @@ async function viewStations() {
     tabbar('stations'));
 }
 
+// ------------------------------------------------------------------ radar
+
+const RADAR_META = 'https://api.rainviewer.com/public/weather-maps.json';
+const RADAR_FRAMES = 7;            // poslední hodina po 10 min (RainViewer má limit 100 dotazů/min)
+const CZ_CENTER = [49.8, 15.5];
+let radar = null;                  // { map, timer } aktivní mapy, ať jde uklidit
+
+function stopRadar() {
+  if (!radar) return;
+  clearInterval(radar.timer);
+  radar.map.remove();
+  radar = null;
+}
+
+let leafletLoading = null;
+function loadLeaflet() {
+  if (window.L) return Promise.resolve(window.L);
+  if (!leafletLoading) {
+    leafletLoading = new Promise((resolve, reject) => {
+      document.head.append(h('link', { rel: 'stylesheet', href: '/vendor/leaflet/leaflet.css' }));
+      const sc = h('script', { src: '/vendor/leaflet/leaflet.js' });
+      sc.addEventListener('load', () => resolve(window.L));
+      sc.addEventListener('error', () => { leafletLoading = null; reject(new Error('leaflet')); });
+      document.head.append(sc);
+    });
+  }
+  return leafletLoading;
+}
+
+async function viewRadar() {
+  document.title = 'Meteo – radar';
+  $app.classList.remove('no-tabbar');
+  const [cfg, fc, L] = await Promise.all([api('/config'), loadForecast(), loadLeaflet()]);
+  const home = cfg.location ? [cfg.location.lat, cfg.location.lon] : null;
+
+  const mapEl = h('div', { class: 'radar-map', role: 'img', 'aria-label': 'Mapa srážek v okolí domova za poslední hodinu' });
+  const status = h('p', { class: 'note radar-status', role: 'status' });
+  const playBtn = h('button', { class: 'play', type: 'button', 'aria-label': 'Přehrát animaci' }, icon('play', { size: 'lg' }));
+  const framesEl = h('div', { class: 'frames', role: 'group', 'aria-label': 'Čas snímku' });
+  const nc = nowcast(fc);
+
+  render(
+    h('header', { class: 'header' },
+      h('div', { class: 'header-titles' },
+        h('span', { class: 'eyebrow', text: 'Posledních 60 minut' }),
+        h('h1', { text: 'Radar srážek' }))),
+    mapEl,
+    h('div', { class: 'radar-controls' }, playBtn, framesEl),
+    status,
+    h('section', { class: 'card row' },
+      h('span', { class: 'row-icon' }, icon(nc && nc.wet ? 'rain' : 'radar', { color: '#7cc4f2' })),
+      h('span', { class: 'row-text' },
+        h('span', { class: 'row-title', text: nc ? nc.title : 'Předpověď srážek nedostupná' }),
+        h('span', { class: 'sub', text: nc ? nc.sub : (home ? 'Zkusím to znovu za chvíli.' : 'Chybí poloha domova (install.sh).') }))),
+    tabbar('radar'));
+
+  stopRadar();
+  const map = L.map(mapEl, {
+    center: home || CZ_CENTER, zoom: home ? 8 : 6, minZoom: 5, maxZoom: 11,
+    zoomControl: false, attributionControl: true,
+  });
+  map.attributionControl.setPrefix(false);
+  radar = { map, timer: null };
+
+  // Podklad OSM, ztmavený filtrem v CSS. Pravidla OSM: atribuce + Referer, žádné offline ukládání.
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 11, className: 'basemap', referrerPolicy: 'strict-origin-when-cross-origin',
+    attribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>',
+  }).addTo(map);
+
+  if (home) {
+    for (const km of [10, 25]) {
+      L.circle(home, { radius: km * 1000, interactive: false, color: '#7d8896', weight: 1, opacity: 0.7, dashArray: '3 6', fill: false }).addTo(map);
+    }
+    L.circleMarker(home, { radius: 6, interactive: false, color: '#0e1217', weight: 2, fillColor: '#7cc4f2', fillOpacity: 1 }).addTo(map);
+  }
+
+  let meta;
+  try {
+    const res = await fetch(RADAR_META, { cache: 'no-store', referrerPolicy: 'no-referrer' });
+    meta = await res.json();
+  } catch (_) {
+    status.textContent = 'Radar je teď nedostupný. Zkus to za chvíli.';
+    return;
+  }
+  if (!radar || radar.map !== map) return;   // mezitím odešel jinam
+
+  const past = ((meta.radar && meta.radar.past) || []).slice(-RADAR_FRAMES);
+  if (!past.length) { status.textContent = 'Radar teď neposkytuje žádné snímky.'; return; }
+
+  const layers = past.map((f) => L.tileLayer(`${meta.host}${f.path}/512/{z}/{x}/{y}/2/1_1.png`, {
+    tileSize: 512, zoomOffset: -1, maxNativeZoom: 8, maxZoom: 11, opacity: 0, zIndex: 5,
+    attribution: 'Radar <a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a>',
+  }));
+  let current = -1;
+  const buttons = past.map((f, i) => {
+    const label = i === past.length - 1 ? 'nyní' : timeHM.format(new Date(f.time * 1000));
+    return h('button', {
+      type: 'button', 'aria-pressed': 'false', 'aria-label': `Snímek ${timeHM.format(new Date(f.time * 1000))}`,
+      onclick: () => { stop(); show(i); },
+    }, h('span', { class: 'bar' }), h('span', { class: 'lbl', text: label }));
+  });
+  framesEl.replaceChildren(...buttons);
+
+  function show(i) {
+    if (!map.hasLayer(layers[i])) layers[i].addTo(map);
+    layers[i].setOpacity(0.75);
+    if (current >= 0 && current !== i) layers[current].setOpacity(0);
+    if (current >= 0) buttons[current].setAttribute('aria-pressed', 'false');
+    buttons[i].setAttribute('aria-pressed', 'true');
+    current = i;
+    status.textContent = `Snímek z ${timeHM.format(new Date(past[i].time * 1000))}`;
+  }
+  function stop() {
+    clearInterval(radar && radar.timer);
+    if (radar) radar.timer = null;
+    playBtn.replaceChildren(icon('play', { size: 'lg' }));
+    playBtn.setAttribute('aria-label', 'Přehrát animaci');
+  }
+  playBtn.addEventListener('click', () => {
+    if (radar.timer) { stop(); return; }
+    playBtn.replaceChildren(icon('pause', { size: 'lg' }));
+    playBtn.setAttribute('aria-label', 'Zastavit animaci');
+    show(0);
+    radar.timer = setInterval(() => show((current + 1) % past.length), 700);
+  });
+  show(past.length - 1);
+}
+
 // ------------------------------------------------------------------ router
 
 let routing = 0;
@@ -530,7 +755,9 @@ let routing = 0;
 async function route() {
   const my = ++routing;
   const parts = (location.hash || '#/').slice(2).split('/').filter(Boolean);
+  if (parts[0] !== 'radar') stopRadar();
   try {
+    if (parts[0] === 'radar') return await viewRadar();
     if (parts[0] === 'login') return viewLogin();
     if (parts[0] === 'detail') return await viewDetail(parts[1], parts[2] || OUTDOOR);
     if (parts[0] === 'stanice') return await viewStations();

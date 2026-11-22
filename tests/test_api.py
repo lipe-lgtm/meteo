@@ -162,3 +162,81 @@ def test_migrate_legacy(tmp_path):
     ts = [r[0] for r in conn.execute(
         "SELECT ts FROM readings WHERE metric='temperature' ORDER BY ts")]
     assert ts == [1795165200, 1795168800]  # 2026-11-20 09:00 a 10:00 UTC
+
+
+# ------------------------------------------------------------------ předpověď
+
+FAKE_OM = {
+    "daily": {
+        "time": [1795302000, 1795388400],
+        "weather_code": [61, 3],
+        "temperature_2m_max": [6.8, 5.1],
+        "temperature_2m_min": [1.2, -0.4],
+        "precipitation_sum": [2.4, 0.0],
+        "precipitation_probability_max": [80, 10],
+    },
+    "minutely_15": {"time": [1795370400, 1795371300, 1795372200], "precipitation": [0.0, 0.0, 0.3]},
+    "hourly": {"time": [1795370400], "temperature_2m": [4.1], "precipitation": [0.0], "weather_code": [3]},
+}
+
+
+@pytest.fixture
+def geo_app(tmp_path, monkeypatch):
+    from meteo import forecast
+    forecast.clear_cache()
+    calls = []
+
+    def fake_fetch(url, timeout=8):
+        calls.append(url)
+        if fake_fetch.fail:
+            raise OSError("down")
+        return FAKE_OM
+    fake_fetch.fail = False
+    monkeypatch.setattr(forecast, "fetch_upstream", fake_fetch)
+    app = create_app({
+        "DATABASE": str(tmp_path / "t.db"), "SECRET_KEY": "test", "SESSION_COOKIE_SECURE": False,
+        "TESTING": True, "LOCATION_LAT": 50.0875, "LOCATION_LON": 14.4214,
+    })
+    with app.app_context():
+        conn = db.get_db()
+        conn.execute("INSERT INTO users VALUES (?, ?, ?)", ("petr", hash_password("spravne-heslo-123"), db.now()))
+        conn.commit()
+    limiter._fails.clear()
+    return app, calls, fake_fetch
+
+
+def test_forecast_requires_login_and_location(client):
+    assert client.get("/api/v1/forecast").status_code == 401
+    login(client)
+    assert client.get("/api/v1/forecast").json["error"] == "location_not_set"
+    assert client.get("/api/v1/config").json["location"] is None
+
+
+def test_forecast_normalized_and_cached(geo_app):
+    app, calls, _ = geo_app
+    c = app.test_client()
+    login(c)
+    r = c.get("/api/v1/forecast")
+    assert r.status_code == 200
+    d = r.json
+    assert d["stale"] is False and d["source"] == "Open-Meteo"
+    assert d["days"][0] == {"t": 1795302000, "code": 61, "tmax": 6.8, "tmin": 1.2, "precip": 2.4, "prob": 80}
+    assert d["nowcast"][2]["precip"] == 0.3
+    assert "latitude=50.0875" in calls[0] and "timeformat=unixtime" in calls[0]
+    c.get("/api/v1/forecast")
+    assert len(calls) == 1          # druhý dotaz z cache
+    assert c.get("/api/v1/config").json["location"] == {"lat": 50.0875, "lon": 14.4214}
+
+
+def test_forecast_falls_back_to_stale(geo_app, monkeypatch):
+    from meteo import forecast
+    app, calls, fake = geo_app
+    c = app.test_client()
+    login(c)
+    c.get("/api/v1/forecast")
+    monkeypatch.setattr(forecast, "CACHE_SECONDS", 0)
+    fake.fail = True
+    r = c.get("/api/v1/forecast")
+    assert r.status_code == 200 and r.json["stale"] is True
+    forecast.clear_cache()
+    assert c.get("/api/v1/forecast").status_code == 503

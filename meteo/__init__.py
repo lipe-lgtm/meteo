@@ -14,6 +14,13 @@ def _env_bool(name, default):
     return val.strip().lower() in ("1", "true", "yes", "on")
 
 
+def _env_float(name):
+    try:
+        return float(os.environ[name])
+    except (KeyError, ValueError):
+        return None
+
+
 def create_app(config=None):
     app = Flask(__name__)
 
@@ -31,6 +38,10 @@ def create_app(config=None):
         # Starý endpoint /data/simple pro displej (Pico WH) – jen z domácí sítě
         LEGACY_SIMPLE_NETS=os.environ.get("METEO_LEGACY_NETS", "192.168.1.0/24"),
         RETENTION_DAYS=int(os.environ.get("METEO_RETENTION_DAYS", "730")),
+        # Poloha domova pro předpověď a radar (prázdné = vypnuto)
+        LOCATION_LAT=_env_float("METEO_LAT"),
+        LOCATION_LON=_env_float("METEO_LON"),
+        FORECAST_URL=os.environ.get("METEO_FORECAST_URL", "https://api.open-meteo.com/v1/forecast"),
         MAX_CONTENT_LENGTH=64 * 1024,
         JSON_SORT_KEYS=False,
     )
