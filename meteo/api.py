@@ -21,7 +21,7 @@ import json
 
 from flask import Blueprint, current_app, g, jsonify, request, session
 
-from . import db, forecast, radar
+from . import alerts, db, forecast, radar, webpush
 from .auth import limiter, login_required, station_required, verify_user
 
 bp = Blueprint("api", __name__, url_prefix="/api/v1")
@@ -396,3 +396,113 @@ def radar_image(frame_id):
     # obsah snímku se pod stejným jménem nikdy nemění
     resp.headers["Cache-Control"] = "private, max-age=86400, immutable"
     return resp
+
+
+# ------------------------------------------------------------------ upozornění
+
+def _sender(conn):
+    cfg = current_app.config
+    return alerts.Sender(conn, alerts.load_key(cfg["VAPID_KEY"]), cfg["VAPID_SUB"])
+
+
+@bp.get("/push/key")
+@login_required
+def push_key():
+    key = alerts.load_key(current_app.config["VAPID_KEY"])
+    if key is None:
+        return jsonify(error="push_not_configured"), 503
+    return jsonify(publicKey=webpush.vapid_public_key(key))
+
+
+def _endpoint_ok(endpoint):
+    cfg = current_app.config
+    hosts = cfg["PUSH_HOSTS"] or webpush.DEFAULT_PUSH_HOSTS
+    return isinstance(endpoint, str) and len(endpoint) < 1024 and \
+        webpush.endpoint_allowed(endpoint, hosts, allow_http=cfg.get("TESTING", False))
+
+
+@bp.post("/push/subscribe")
+@login_required
+def push_subscribe():
+    body = _json_body() or {}
+    endpoint = body.get("endpoint")
+    keys = body.get("keys") if isinstance(body.get("keys"), dict) else {}
+    p256dh, auth = keys.get("p256dh"), keys.get("auth")
+    if not _endpoint_ok(endpoint):
+        return jsonify(error="endpoint_not_allowed"), 400
+    try:
+        if len(webpush.b64u_decode(str(p256dh))) != 65 or len(webpush.b64u_decode(str(auth))) != 16:
+            raise ValueError
+    except (ValueError, TypeError):
+        return jsonify(error="invalid_keys"), 400
+    label = str(body.get("label") or "")[:40] or None
+    conn = db.get_db()
+    conn.execute(
+        """INSERT INTO push_subscriptions (username, endpoint, p256dh, auth, label, created_at)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(endpoint) DO UPDATE SET username = excluded.username, p256dh = excluded.p256dh,
+               auth = excluded.auth, label = COALESCE(excluded.label, push_subscriptions.label), fails = 0""",
+        (g.user, endpoint, p256dh, auth, label, db.now()),
+    )
+    db.audit(conn, g.user, "push_subscribe", label)
+    conn.commit()
+    return jsonify(ok=True)
+
+
+@bp.post("/push/unsubscribe")
+@login_required
+def push_unsubscribe():
+    body = _json_body() or {}
+    conn = db.get_db()
+    cur = conn.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (str(body.get("endpoint", "")),))
+    conn.commit()
+    return jsonify(ok=True, removed=cur.rowcount)
+
+
+@bp.post("/push/test")
+@login_required
+def push_test():
+    body = _json_body() or {}
+    endpoint = body.get("endpoint")
+    conn = db.get_db()
+    sender = _sender(conn)
+    if sender.key is None:
+        return jsonify(error="push_not_configured"), 503
+    sent, failed = sender.push(
+        {"title": "Zkušební upozornění", "body": "Upozornění z meteostanice fungují.", "tag": "test", "url": "/#/upozorneni"},
+        only_endpoint=endpoint if isinstance(endpoint, str) else None)
+    return jsonify(sent=sent, failed=failed)
+
+
+@bp.get("/alerts")
+@login_required
+def alerts_overview():
+    conn = db.get_db()
+    history = conn.execute(
+        "SELECT ts, rule, title, body, sent FROM notifications ORDER BY ts DESC, id DESC LIMIT 30").fetchall()
+    devices = conn.execute(
+        "SELECT endpoint, label, created_at, last_ok FROM push_subscriptions ORDER BY created_at").fetchall()
+    return jsonify(
+        settings=alerts.load_settings(conn),
+        configured=alerts.load_key(current_app.config["VAPID_KEY"]) is not None,
+        history=[dict(r) for r in history],
+        # endpoint je tajný identifikátor zařízení – klient dostane jen jeho otisk na porovnání
+        devices=[{"id": _endpoint_id(d["endpoint"]), "label": d["label"], "since": d["created_at"],
+                  "last_ok": d["last_ok"]} for d in devices],
+    )
+
+
+def _endpoint_id(endpoint):
+    import hashlib
+    return hashlib.sha256(endpoint.encode()).hexdigest()[:16]
+
+
+@bp.post("/alerts/settings")
+@login_required
+def alerts_settings():
+    body = _json_body() or {}
+    conn = db.get_db()
+    clean = alerts.save_settings(conn, body.get("settings"))
+    db.audit(conn, g.user, "alerts_settings")
+    conn.commit()
+    return jsonify(settings=clean)

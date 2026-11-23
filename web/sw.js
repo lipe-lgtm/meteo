@@ -43,3 +43,44 @@ self.addEventListener('fetch', (event) => {
   // statické soubory: z cache, jinak ze sítě
   event.respondWith(caches.match(event.request).then((hit) => hit || fetch(event.request)));
 });
+
+// ---------------------------------------------------------------- upozornění (Web Push)
+self.addEventListener('push', (event) => {
+  let msg = {};
+  try { msg = event.data ? event.data.json() : {}; } catch (_) { msg = { body: event.data ? event.data.text() : '' }; }
+  event.waitUntil(self.registration.showNotification(msg.title || 'Meteo', {
+    body: msg.body || '',
+    tag: msg.tag || 'meteo',
+    renotify: true,
+    icon: '/img/icon-192.png',
+    timestamp: msg.ts ? msg.ts * 1000 : Date.now(),
+    data: { url: typeof msg.url === 'string' && msg.url.startsWith('/') ? msg.url : '/' },
+  }));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const url = new URL(event.notification.data && event.notification.data.url || '/', self.location.origin).href;
+  event.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+    const win = list.find((c) => c.url.startsWith(self.location.origin));
+    if (win) return win.focus().then((c) => (c && c.navigate ? c.navigate(url) : c)).catch(() => {});
+    return self.clients.openWindow(url);
+  }));
+});
+
+// Prohlížeč odběr obnovil (nové klíče) – nahlásit serveru, jinak by upozornění přestala chodit
+self.addEventListener('pushsubscriptionchange', (event) => {
+  event.waitUntil((async () => {
+    const res = await fetch('/api/v1/push/key', { credentials: 'same-origin' });
+    if (!res.ok) return;
+    const { publicKey } = await res.json();
+    const raw = publicKey.replace(/-/g, '+').replace(/_/g, '/');
+    const key = Uint8Array.from(atob(raw + '='.repeat((4 - (raw.length % 4)) % 4)), (c) => c.charCodeAt(0));
+    const sub = event.newSubscription || await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
+    await fetch('/api/v1/push/subscribe', {
+      method: 'POST', credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'meteo-app' },
+      body: JSON.stringify(sub.toJSON()),
+    });
+  })());
+});

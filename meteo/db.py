@@ -48,6 +48,41 @@ CREATE TABLE IF NOT EXISTS audit_log (
     action  TEXT NOT NULL,
     detail  TEXT
 );
+
+-- Upozornění: zařízení přihlášená k Web Push, stav pravidel, historie, nastavení
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    username   TEXT NOT NULL,
+    endpoint   TEXT NOT NULL UNIQUE,
+    p256dh     TEXT NOT NULL,
+    auth       TEXT NOT NULL,
+    label      TEXT,
+    created_at INTEGER NOT NULL,
+    last_ok    INTEGER,
+    fails      INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS alert_state (
+    rule      TEXT PRIMARY KEY,
+    active    INTEGER NOT NULL DEFAULT 0,
+    since     INTEGER,
+    last_sent INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts     INTEGER NOT NULL,
+    rule   TEXT NOT NULL,
+    title  TEXT NOT NULL,
+    body   TEXT NOT NULL,
+    sent   INTEGER NOT NULL DEFAULT 0   -- 0 čeká (noční klid), 1 odesláno, 2 už neaktuální
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_ts ON notifications (ts);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 # Povolené veličiny a jejich rozumný fyzikální rozsah (mimo rozsah = zahodit)
@@ -120,5 +155,6 @@ def audit(conn, actor, action, detail=None):
 def cleanup(conn, retention_days):
     cutoff = now() - retention_days * 86400
     cur = conn.execute("DELETE FROM readings WHERE ts < ?", (cutoff,))
+    conn.execute("DELETE FROM notifications WHERE ts < ?", (now() - 90 * 86400,))
     conn.commit()
     return cur.rowcount

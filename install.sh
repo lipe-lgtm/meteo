@@ -213,6 +213,17 @@ if [[ $LOCATION != none ]]; then
 else
     sed -i '/^METEO_LAT=/d; /^METEO_LON=/d' "$ENV_FILE"
 fi
+# Klíč pro Web Push (upozornění do telefonu) – vytvoří se jednou, služba ho jen čte
+VAPID_FILE="$ETC_DIR/vapid.pem"
+if [[ ! -f $VAPID_FILE ]]; then
+    (cd "$APP_DIR" && "$APP_DIR/venv/bin/python" manage.py vapid-init "$VAPID_FILE" >/dev/null)
+    ok "vytvořen klíč pro upozornění ($VAPID_FILE)"
+fi
+chown root:meteo "$VAPID_FILE"
+chmod 640 "$VAPID_FILE"
+set_env METEO_VAPID_KEY "$VAPID_FILE"
+set_env METEO_VAPID_SUB "https://$DOMAIN"
+
 chown meteo:meteo "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 
@@ -236,11 +247,12 @@ NEW_KEY=$(manage ensure-station "$STATION_ID" "Venkovní stanice")
 
 # ------------------------------------------------------------------ 6) služba
 say "Služba meteo"
-cp "$SRC/deploy/meteo.service" "$SRC/deploy/meteo-cleanup.service" "$SRC/deploy/meteo-cleanup.timer" /etc/systemd/system/
+cp "$SRC/deploy/meteo.service" "$SRC/deploy/meteo-cleanup.service" "$SRC/deploy/meteo-cleanup.timer" \
+   "$SRC/deploy/meteo-alerts.service" "$SRC/deploy/meteo-alerts.timer" /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable -q meteo meteo-cleanup.timer
+systemctl enable -q meteo meteo-cleanup.timer meteo-alerts.timer
 systemctl restart meteo
-systemctl start meteo-cleanup.timer
+systemctl start meteo-cleanup.timer meteo-alerts.timer
 up=0
 for _ in $(seq 1 30); do
     if health "$APP_PORT"; then up=1; break; fi

@@ -146,6 +146,47 @@ def cmd_status(_args):
             print(f"  Wi-Fi {info['rssi']:g} dBm, volná paměť {info.get('mem') or 0:g} B, firmware {info.get('fw')}")
 
 
+def cmd_vapid_init(args):
+    """Vytvoří klíč pro Web Push (jen když ještě není). Tiskne veřejnou část."""
+    from meteo import webpush
+    path = args.path
+    if not os.path.exists(path):
+        old = os.umask(0o027)
+        try:
+            with open(path, "wb") as fh:
+                fh.write(webpush.generate_vapid_pem())
+        finally:
+            os.umask(old)
+    print(webpush.vapid_public_key(webpush.load_vapid(path)))
+
+
+def _env_float(name):
+    try:
+        return float(os.environ[name])
+    except (KeyError, ValueError):
+        return None
+
+
+def cmd_check_alerts(args):
+    """Spouští systemd timer každých 5 minut."""
+    from meteo import alerts, forecast
+    conn = open_db()
+    settings = alerts.load_settings(conn)
+    sender = alerts.Sender(conn, alerts.load_key(os.environ.get("METEO_VAPID_KEY")),
+                           os.environ.get("METEO_VAPID_SUB", "mailto:root@localhost"))
+    fc = None
+    lat, lon = _env_float("METEO_LAT"), _env_float("METEO_LON")
+    if lat is not None and lon is not None and (settings["rain"]["on"] or settings["frost_forecast"]["on"]):
+        try:
+            fc, _ = forecast.get_forecast(
+                os.environ.get("METEO_FORECAST_URL", "https://api.open-meteo.com/v1/forecast"), lat, lon)
+        except Exception as exc:  # noqa: BLE001 – bez předpovědi se hlídá zbytek
+            print(f"Předpověď nedostupná: {exc}", file=sys.stderr)
+    active = alerts.check(conn, settings, sender, fc)
+    if args.verbose:
+        print("Aktivní:", ", ".join(sorted(active)) or "nic")
+
+
 def cmd_cleanup(_args):
     days = int(os.environ.get("METEO_RETENTION_DAYS", "730"))
     deleted = db.cleanup(open_db(), days)
@@ -269,6 +310,14 @@ def main():
     sub.add_parser("list-stations").set_defaults(func=cmd_list_stations)
     sub.add_parser("cleanup").set_defaults(func=cmd_cleanup)
     sub.add_parser("status", help="poslední hodnoty a stav čidel").set_defaults(func=cmd_status)
+
+    sp = sub.add_parser("vapid-init", help=argparse.SUPPRESS)
+    sp.add_argument("path")
+    sp.set_defaults(func=cmd_vapid_init)
+
+    sp = sub.add_parser("check-alerts", help="vyhodnotit upozornění (spouští timer)")
+    sp.add_argument("-v", "--verbose", action="store_true")
+    sp.set_defaults(func=cmd_check_alerts)
 
     sp = sub.add_parser("migrate-legacy")
     sp.add_argument("source", help="cesta ke staré home_center.db")

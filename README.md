@@ -105,6 +105,30 @@ proto jsou obrázky aplikace v `web/img/`.
 Polohu se `install.sh` zeptá jednou (souřadnice stačí vložit z Mapy.cz).
 Změna: smaž řádek `LOCATION` v `/etc/meteo/install.conf` a spusť skript znovu.
 
+## Upozornění
+
+Do telefonu i počítače přes Web Push – přímo z aplikace, bez další aplikace nebo účtu.
+Zapíná se v záložce **Upozornění** na každém zařízení zvlášť. Na iPhonu jen v aplikaci
+přidané na plochu (Safari → Sdílet → Přidat na plochu, iOS 16.4+).
+
+Zprávy jsou šifrované klíčem zařízení, push služba (Apple/Google/Mozilla) obsah nevidí.
+Doručí se i bez VPN – ven odchází jen zpráva, do aplikace se dál chodí jen z domova/VPN.
+
+Pravidla (prahy se nastavují v aplikaci), vyhodnocení každých 5 minut (`meteo-alerts.timer`):
+
+| Pravidlo | Kdy | Poznámka |
+|---|---|---|
+| Výpadek stanice | bez dat déle než 20 min | i zpráva o návratu |
+| Mráz | naměřeno ≤ 0 °C (2 měření po sobě) | projde nočním klidem, hystereze 1 °C |
+| Mráz v noci | předpověď na 16 h ≤ 0 °C | jednou denně po 17:00 |
+| Déšť do hodiny | 15min předpověď ≥ 0,2 mm | nejvýš jednou za 3 h |
+| Zhoršený vzduch | průměr PM2.5 za 30 min ≥ 35 µg/m³ | konec pod 70 % prahu |
+| Porucha čidla | chyba z diagnostiky déle než 10 min | i zpráva o opravě |
+| Noční klid | 22–7 h | ostatní zprávy ráno, pokud pořád platí |
+
+Klíč serveru (VAPID) vytvoří `install.sh` do `/etc/meteo/vapid.pem`.
+Ruční vyhodnocení: `sudo -u meteo meteo-manage check-alerts -v`.
+
 ## ESP32
 
 Ve složce `firmware/`: `main.py` a `config.example.py`. Zkopíruj `config.example.py`
@@ -159,6 +183,8 @@ sudo -u meteo meteo-manage migrate-legacy /tmp/home_center.db --since 2026-11-01
 | POST | `/api/v1/admin/reset` `{password, confirm:"SMAZAT"}` | aplikace |
 | GET | `/api/v1/config`, `/api/v1/forecast` – poloha, předpověď | aplikace |
 | GET | `/api/v1/radar`, `/api/v1/radar/<id>.png` – snímky ČHMÚ | aplikace |
+| GET | `/api/v1/alerts` · POST `/alerts/settings` – pravidla, historie | aplikace |
+| GET | `/api/v1/push/key` · POST `/push/subscribe`, `/push/unsubscribe`, `/push/test` | aplikace |
 | GET | `/api/v1/health` | kdokoli |
 
 Změnové požadavky z aplikace musí mít hlavičku `X-Requested-With: meteo-app`.

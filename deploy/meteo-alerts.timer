@@ -1,0 +1,10 @@
+[Unit]
+Description=Meteo – upozornění každých 5 minut
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

@@ -6,6 +6,8 @@ const OUTDOOR = 'outdoor_station';
 const INDOOR = 'indoor_station';
 const STALE_AFTER = 15 * 60;      // hodnota starší než 15 min se zobrazí šedě
 const REFRESH_MS = 60 * 1000;
+// Široké okno (počítač): navigace vlevo, obsah ve sloupcích, větší grafy
+const WIDE = window.matchMedia('(min-width: 900px)');
 const CACHE_KEY = 'meteo:last';
 
 const $app = document.getElementById('app');
@@ -98,6 +100,7 @@ const ICONS = {
   thermo: 'M14 14.8V5a2 2 0 1 0-4 0v9.8a4 4 0 1 0 4 0z',
   radar: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7a5 5 0 1 0 0 10 5 5 0 0 0 0-10zM12 12l6-6',
   play: 'M8 5.5v13l10.5-6.5z',
+  bell: 'M6 9a6 6 0 1 1 12 0c0 6 2.5 7.5 2.5 7.5h-17S6 15 6 9zM10 20a2.2 2.2 0 0 0 4 0',
   pause: 'M7 5h3v14H7zM14 5h3v14h-3z',
   cloud: 'M7 18h10a4 4 0 0 0 .4-8A6 6 0 0 0 6.1 11 3.5 3.5 0 0 0 7 18z',
   partly: 'M8 3v1.5M3.6 4.6l1 1M2 9h1.5M12.4 4.6l-1 1M5.2 11.6A3.5 3.5 0 1 1 11.6 8M9 19h8a3.5 3.5 0 0 0 .3-7A5 5 0 0 0 8 12.6 3.2 3.2 0 0 0 9 19z',
@@ -232,6 +235,7 @@ function tabbar(active) {
   return h('nav', { class: 'tabbar', 'aria-label': 'Hlavní navigace' },
     tab('#/', 'grid', 'Přehled', 'home'),
     tab('#/radar', 'radar', 'Radar', 'radar'),
+    tab('#/upozorneni', 'bell', 'Upozornění', 'alerts'),
     tab('#/stanice', 'station', 'Stanice', 'stations'));
 }
 
@@ -492,13 +496,16 @@ function overviewView(data, { cachedAt } = {}) {
         h('h1', { text: 'Doma' })),
       statusPill(data.stations.stations, now)),
     cachedAt ? offlineBanner(cachedAt) : null,
-    heroCard(out.temperature, data.temp, now,
-      sensorProblem(data.stations.stations.find((x) => x.id === OUTDOOR), 'ds18b20', 'temperature')),
-    airCard(out, now),
-    h('div', { class: 'grid2' }, humidityTile(out.humidity, now), indoorTile(indoor, now)),
-    forecastCard(data.forecast),
-    radarRow(data.forecast),
-    lightRow(out.light, now),
+    h('div', { class: 'cols' },
+      h('div', { class: 'col' },
+        heroCard(out.temperature, data.temp, now,
+          sensorProblem(data.stations.stations.find((x) => x.id === OUTDOOR), 'ds18b20', 'temperature')),
+        airCard(out, now),
+        h('div', { class: 'grid2' }, humidityTile(out.humidity, now), indoorTile(indoor, now))),
+      h('div', { class: 'col' },
+        forecastCard(data.forecast),
+        radarRow(data.forecast),
+        lightRow(out.light, now))),
     tabbar('home'));
 }
 
@@ -549,7 +556,7 @@ async function viewDetail(metric, station = OUTDOOR) {
 
   let chart;
   if (pts.length > 1) {
-    const svg = lineChart(pts);
+    const svg = WIDE.matches ? lineChart(pts, { width: 720, height: 300 }) : lineChart(pts);
     const vals = pts.map((p) => p[1]);
     svg.setAttribute('aria-label', `Průběh za ${range.label}: od ${meta.fmt(Math.min(...vals))}${meta.suffix} do ${meta.fmt(Math.max(...vals))}${meta.suffix} ${meta.unit}`);
     chart = h('figure', { class: 'chart' }, svg,
@@ -571,17 +578,18 @@ async function viewDetail(metric, station = OUTDOOR) {
     h('div', { class: 'topbar' },
       h('a', { class: 'back', href: '#/', 'aria-label': 'Zpět na přehled' }, icon('back', { size: 'lg' })),
       h('h1', { text: title })),
+    h('div', { class: 'detail-grid' }, h('div', { class: 'col' },
     h('div', { class: 'detail-value' },
       h('div', { class: 'big' },
         h('span', { class: `num ${cur && now - cur.ts > STALE_AFTER ? 'stale' : ''}`, text: cur ? `${meta.fmt(cur.value)}${meta.suffix.trim() === '°' ? '°' : ''}` : '–' }),
         cur && meta.unit ? h('span', { class: 'unit', text: meta.unit }) : null),
       h('span', { class: 'sub', text: cur ? `Naměřeno ${ago(cur.ts, now)} (${timeHM.format(new Date(cur.ts * 1000))})` : 'Zatím bez měření' })),
-    seg, chart, stats,
+    seg, chart), h('div', { class: 'col' }, stats,
     h('section', { class: 'card' },
       h('h2', { class: 'section-title', text: 'Měření' }),
       h('div', { class: 'kv' }, h('span', { text: 'Stanice' }), h('span', { text: stationInfo ? `${stationInfo.name} · ${stationInfo.online ? 'online' : 'offline'}` : station })),
       station === OUTDOOR ? h('div', { class: 'kv' }, h('span', { text: 'Čidlo' }), h('span', { text: meta.sensor })) : null,
-      h('div', { class: 'kv' }, h('span', { text: 'Body v grafu' }), h('span', { text: `průměr za ${Math.round(hist.bucket_seconds / 60)} min` }))));
+      h('div', { class: 'kv' }, h('span', { text: 'Body v grafu' }), h('span', { text: `průměr za ${Math.round(hist.bucket_seconds / 60)} min` }))))));
 }
 
 // ------------------------------------------------------------------ stanice
@@ -685,13 +693,233 @@ async function viewStations() {
 
   render(
     h('header', { class: 'header' }, h('div', { class: 'header-titles' }, h('span', { class: 'eyebrow', text: 'Zařízení' }), h('h1', { text: 'Stanice' }))),
-    cards.length ? cards : h('p', { class: 'note', text: 'Zatím není zaregistrovaná žádná stanice.' }),
+    cards.length ? h('div', { class: 'cards' }, cards) : h('p', { class: 'note', text: 'Zatím není zaregistrovaná žádná stanice.' }),
     h('button', {
       class: 'btn ghost block', type: 'button', text: `Odhlásit (${me.user})`,
       onclick: async () => { await api('/auth/logout', { body: {} }).catch(() => {}); clearCache(); location.hash = '#/login'; },
     }),
     h('p', { class: 'footer', text: 'Meteo' }),
     tabbar('stations'));
+}
+
+// ------------------------------------------------------------------ upozornění
+
+const RULES = [
+  { key: 'offline', title: 'Výpadek stanice', fields: [['Bez dat déle než', 'minutes', 'min', 5]],
+    note: 'Dám vědět i když se stanice zase ozve.' },
+  { key: 'frost', title: 'Mráz', fields: [['Naměřeno', 'below', '°C nebo méně', 0.5]],
+    note: 'Přijde i v nočním klidu.' },
+  { key: 'frost_forecast', title: 'Mráz v noci podle předpovědi', fields: [['Večer, když má klesnout na', 'below', '°C', 0.5]],
+    note: 'Jednou denně po 17. hodině.' },
+  { key: 'rain', title: 'Déšť do hodiny', fields: [['Předpověď na hodinu aspoň', 'mm', 'mm', 0.1]],
+    note: 'Nejvýš jednou za 3 hodiny.' },
+  { key: 'air', title: 'Zhoršený vzduch', fields: [['Průměr PM2.5 za půl hodiny od', 'pm25', 'µg/m³', 5]] },
+  { key: 'sensor', title: 'Porucha čidla', fields: [], note: 'Když čidlo hlásí chybu déle než 10 minut.' },
+  { key: 'quiet', title: 'Noční klid', fields: [['Od', 'from', 'h', 1], ['Do', 'to', 'h', 1]],
+    note: 'V klidu přijde jen mráz. Ostatní ráno, pokud pořád platí.' },
+];
+
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const isIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+
+function deviceLabel() {
+  const ua = navigator.userAgent;
+  const os = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) || isIOS() ? 'iPad' : /Android/.test(ua) ? 'Android'
+    : /Windows/.test(ua) ? 'Windows' : /Mac OS X/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux' : 'Zařízení';
+  const br = /Edg\//.test(ua) ? 'Edge' : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : '';
+  return br && os !== 'iPhone' && os !== 'iPad' ? `${os} · ${br}` : os;
+}
+
+function b64uToBytes(text) {
+  const b64 = text.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (text.length % 4)) % 4);
+  return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+}
+
+async function endpointId(endpoint) {
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(endpoint));
+  return Array.from(new Uint8Array(hash)).map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
+}
+
+// serviceWorker.ready se nevyřeší, když se worker nezaregistroval – nečekat věčně
+function swReady(ms = 4000) {
+  return Promise.race([navigator.serviceWorker.ready, new Promise((resolve) => setTimeout(() => resolve(null), ms))]);
+}
+
+async function currentSubscription() {
+  if (!pushSupported()) return null;
+  const reg = await swReady();
+  return reg ? reg.pushManager.getSubscription() : null;
+}
+
+async function enablePush(status) {
+  // iOS: žádost o povolení musí přijít přímo z klepnutí, proto hned jako první
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') {
+    status.textContent = 'Upozornění jsi nepovolil. Změnit to jde v nastavení telefonu nebo prohlížeče.';
+    return false;
+  }
+  const { publicKey } = await api('/push/key');
+  const reg = await swReady();
+  if (!reg) throw new Error('service worker není aktivní');
+  const opts = { userVisibleOnly: true, applicationServerKey: b64uToBytes(publicKey) };
+  let sub;
+  try {
+    sub = await reg.pushManager.subscribe(opts);
+  } catch (_) {
+    // starý odběr s jiným klíčem serveru – zrušit a znovu
+    const old = await reg.pushManager.getSubscription();
+    if (old) await old.unsubscribe();
+    sub = await reg.pushManager.subscribe(opts);
+  }
+  await api('/push/subscribe', { body: { ...sub.toJSON(), label: deviceLabel() } });
+  return true;
+}
+
+async function deviceSection(data) {
+  const box = h('section', { class: 'card' }, h('h2', { class: 'section-title', text: 'Toto zařízení' }));
+  const status = h('p', { class: 'note', role: 'status' });
+  const say = (text, state) => box.append(h('div', { class: 'device-state' },
+    h('span', { class: `dot ${state}` }), h('span', { class: 'row-title', text })));
+
+  if (!data.configured) {
+    say('Server ještě nemá klíč pro upozornění', 'idle');
+    box.append(h('p', { class: 'note', text: 'Na Pi spusť znovu  sudo ./install.sh  – klíč se vytvoří sám.' }));
+    return box;
+  }
+  if (!pushSupported()) {
+    say('Upozornění tu nejdou zapnout', 'idle');
+    box.append(h('p', { class: 'note', text: isIOS() && !isStandalone()
+      ? 'Na iPhonu fungují jen v aplikaci přidané na plochu: v Safari Sdílet → Přidat na plochu, pak otevři Meteo z plochy (iOS 16.4 a novější).'
+      : 'Tento prohlížeč upozornění nepodporuje.' }));
+    return box;
+  }
+  if (Notification.permission === 'denied') {
+    say('Upozornění jsou zakázaná', 'bad');
+    box.append(h('p', { class: 'note', text: 'Povol je v nastavení telefonu (Nastavení → Oznámení → Meteo) nebo v nastavení stránky v prohlížeči.' }));
+    return box;
+  }
+
+  let sub = await currentSubscription();
+  let registered = false;
+  if (sub) {
+    const id = await endpointId(sub.endpoint);
+    registered = data.devices.some((d) => d.id === id);
+    if (!registered) {   // server o zařízení neví (např. po resetu) – přihlásit znovu
+      try { await api('/push/subscribe', { body: { ...sub.toJSON(), label: deviceLabel() } }); registered = true; } catch (_) { /* níž tlačítko */ }
+    }
+  }
+
+  if (registered) {
+    say('Dostává upozornění', 'ok');
+    const test = h('button', { class: 'btn', type: 'button', text: 'Poslat zkušební' });
+    test.addEventListener('click', async () => {
+      test.disabled = true;
+      try {
+        const r = await api('/push/test', { body: { endpoint: sub.endpoint } });
+        status.textContent = r.sent ? 'Odesláno – mělo by dorazit během pár sekund.' : 'Nepodařilo se doručit. Zkus upozornění vypnout a zapnout.';
+      } catch (_) { status.textContent = 'Server zprávu neodeslal.'; }
+      test.disabled = false;
+    });
+    const off = h('button', { class: 'btn ghost', type: 'button', text: 'Vypnout' });
+    off.addEventListener('click', async () => {
+      off.disabled = true;
+      await api('/push/unsubscribe', { body: { endpoint: sub.endpoint } }).catch(() => {});
+      await sub.unsubscribe().catch(() => {});
+      route();
+    });
+    box.append(h('div', { class: 'btn-row' }, test, off));
+  } else {
+    say('Upozornění jsou vypnutá', 'idle');
+    const on = h('button', { class: 'btn primary block', type: 'button' }, icon('bell'), h('span', { text: 'Zapnout upozornění' }));
+    on.addEventListener('click', async () => {
+      on.disabled = true;
+      try { if (await enablePush(status)) { route(); return; } }
+      catch (_) { status.textContent = 'Zapnutí se nepovedlo. Zkus to znovu.'; }
+      on.disabled = false;
+    });
+    box.append(on);
+  }
+  box.append(status);
+  const others = data.devices.length;
+  if (others) {
+    box.append(h('p', { class: 'note', text: `Přihlášená zařízení: ${data.devices.map((d) => `${d.label || 'zařízení'} (od ${dayMonth.format(new Date(d.since * 1000))})`).join(', ')}` }));
+  }
+  return box;
+}
+
+function rulesSection(settings) {
+  const state = JSON.parse(JSON.stringify(settings));
+  const saved = h('span', { class: 'source', role: 'status' });
+  let timer = null;
+  const save = () => {
+    clearTimeout(timer);
+    saved.textContent = '';
+    timer = setTimeout(async () => {
+      try {
+        const r = await api('/alerts/settings', { body: { settings: state } });
+        Object.assign(state, r.settings);
+        saved.textContent = 'Uloženo';
+      } catch (ex) {
+        if (ex instanceof AuthError) { location.hash = '#/login'; return; }
+        saved.textContent = 'Neuloženo – zkus znovu';
+      }
+    }, 500);
+  };
+
+  const rows = RULES.map((rule) => {
+    const cfg = state[rule.key];
+    const params = h('div', { class: 'rule-params' }, rule.fields.map(([label, key, unit, step]) => {
+      const input = h('input', {
+        type: 'number', inputmode: 'decimal', step, value: cfg[key], 'aria-label': `${rule.title}: ${label}`,
+        onchange: (e) => { const v = parseFloat(String(e.target.value).replace(',', '.')); if (!Number.isNaN(v)) { cfg[key] = v; save(); } },
+      });
+      return h('label', { class: 'param' }, h('span', { text: label }), input, h('span', { class: 'unit', text: unit }));
+    }));
+    const sw = h('input', {
+      type: 'checkbox', class: 'switch', role: 'switch', checked: cfg.on, 'aria-label': rule.title,
+      onchange: (e) => { cfg.on = e.target.checked; row.classList.toggle('off', !cfg.on); save(); },
+    });
+    const row = h('div', { class: `rule ${cfg.on ? '' : 'off'}` },
+      h('div', { class: 'rule-head' },
+        h('div', { class: 'row-text' },
+          h('span', { class: 'row-title', text: rule.title }),
+          rule.note ? h('span', { class: 'sub', text: rule.note }) : null),
+        sw),
+      rule.fields.length ? params : null);
+    return row;
+  });
+  return h('section', { class: 'card rules' },
+    h('div', { class: 'card-head' }, h('h2', { class: 'section-title', text: 'Kdy dát vědět' }), saved),
+    rows);
+}
+
+function historySection(history) {
+  const fmt = new Intl.DateTimeFormat('cs-CZ', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return h('section', { class: 'card' },
+    h('h2', { class: 'section-title', text: 'Poslední upozornění' }),
+    history.length ? h('ul', { class: 'history' }, history.map((n) => h('li', null,
+      h('div', { class: 'card-head' },
+        h('span', { class: 'row-title', text: n.title }),
+        h('span', { class: 'age', text: fmt.format(new Date(n.ts * 1000)) })),
+      h('span', { class: 'sub', text: n.body }),
+      n.sent === 0 ? h('span', { class: 'tag', text: 'čeká na konec nočního klidu' })
+        : n.sent === 2 ? h('span', { class: 'tag', text: 'v nočním klidu, mezitím pominulo' }) : null)))
+      : h('p', { class: 'note', text: 'Zatím nic. Až se něco stane, najdeš to tady.' }));
+}
+
+async function viewAlerts() {
+  const data = await api('/alerts');
+  document.title = 'Meteo – upozornění';
+  $app.classList.remove('no-tabbar');
+  const device = await deviceSection(data);
+  render(
+    h('header', { class: 'header' }, h('div', { class: 'header-titles' },
+      h('span', { class: 'eyebrow', text: 'Do telefonu i počítače' }), h('h1', { text: 'Upozornění' }))),
+    h('div', { class: 'cols' },
+      h('div', { class: 'col' }, device, historySection(data.history)),
+      h('div', { class: 'col' }, rulesSection(data.settings))),
+    tabbar('alerts'));
 }
 
 // ------------------------------------------------------------------ radar
@@ -888,6 +1116,7 @@ async function route() {
     if (parts[0] === 'login') return viewLogin();
     if (parts[0] === 'detail') return await viewDetail(parts[1], parts[2] || OUTDOOR);
     if (parts[0] === 'stanice') return await viewStations();
+    if (parts[0] === 'upozorneni') return await viewAlerts();
     const data = await loadOverview();
     if (my === routing) overviewView(data);
   } catch (ex) {
@@ -902,6 +1131,8 @@ async function route() {
 }
 
 window.addEventListener('hashchange', () => { window.scrollTo(0, 0); route(); });
+// přechod mezi telefonním a širokým rozvržením (otočení tabletu, změna okna) – grafy se překreslí
+WIDE.addEventListener('change', () => { if (!(location.hash || '').startsWith('#/radar')) route(); });
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
 function refresh() {
   const p = (location.hash || '#/').slice(2);

@@ -42,6 +42,9 @@ def create_app(config=None):
         LOCATION_LAT=_env_float("METEO_LAT"),
         LOCATION_LON=_env_float("METEO_LON"),
         FORECAST_URL=os.environ.get("METEO_FORECAST_URL", "https://api.open-meteo.com/v1/forecast"),
+        VAPID_KEY=os.environ.get("METEO_VAPID_KEY", "/etc/meteo/vapid.pem"),
+        VAPID_SUB=os.environ.get("METEO_VAPID_SUB", "mailto:root@localhost"),
+        PUSH_HOSTS=None,            # None = známé push služby prohlížečů (webpush.DEFAULT_PUSH_HOSTS)
         RADAR_URL=os.environ.get(
             "METEO_RADAR_URL", "https://opendata.chmi.cz/meteorology/weather/radar/composite"),
         MAX_CONTENT_LENGTH=64 * 1024,

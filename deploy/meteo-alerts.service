@@ -1,0 +1,24 @@
+[Unit]
+Description=Meteo – vyhodnocení upozornění
+After=meteo.service
+
+[Service]
+Type=oneshot
+User=meteo
+Group=meteo
+WorkingDirectory=/opt/meteo
+EnvironmentFile=/etc/meteo/meteo.env
+ExecStart=/opt/meteo/venv/bin/python manage.py check-alerts
+TimeoutStartSec=90
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ReadWritePaths=/var/lib/meteo
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
