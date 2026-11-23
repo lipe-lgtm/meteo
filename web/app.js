@@ -1,3 +1,4 @@
+import { moonInfo } from './moon.js';
 // Meteo – PWA bez build kroku. Data jen přes /api/v1 (session cookie).
 // Bezpečnost: veškerý text z API jde do DOM přes textContent, nikdy innerHTML.
 
@@ -483,6 +484,51 @@ function lightRow(v, now) {
     h('span', { class: 'sub', text: lightLabel(v.value) }));
 }
 
+// Měsíc: kotouč s osvětlenou částí (pohled ze severní polokoule – dorůstá zprava)
+function moonIcon(info, size = 28) {
+  const r = 10;
+  const svg = s('svg', { viewBox: '0 0 24 24', width: size, height: size, class: 'moon', 'aria-hidden': 'true' });
+  svg.append(s('circle', { cx: 12, cy: 12, r, fill: '#262e39', stroke: '#3a4554', 'stroke-width': 1 }));
+  const k = info.lit;
+  if (k > 0.01) {
+    const rx = Math.abs(1 - 2 * k) * r;
+    const right = info.waxing;
+    const outer = right ? 1 : 0;                         // vnější okraj osvětlené strany
+    const term = (k < 0.5) === right ? 0 : 1;            // terminátor: srpek / více než půlka
+    const d = `M12 2 A${r} ${r} 0 0 ${outer} 12 22 A${rx.toFixed(2)} ${r} 0 0 ${term} 12 2Z`;
+    svg.append(s('path', { d, fill: '#e9e4d4' }));
+  }
+  return svg;
+}
+
+const weekdayDay = new Intl.DateTimeFormat('cs-CZ', { weekday: 'short', day: 'numeric', month: 'numeric' });
+
+function moonWhen(t) {
+  const date = new Date(t);
+  const today = new Date();
+  const days = Math.round((new Date(date).setHours(0, 0, 0, 0) - new Date(today).setHours(0, 0, 0, 0)) / 86400000);
+  const day = days === 0 ? 'dnes' : days === 1 ? 'zítra' : weekdayDay.format(date);
+  // výpočet je přesný zhruba na půl hodiny – čas zaokrouhlit
+  const rounded = new Date(Math.round(t / 600000) * 600000);
+  return `${day} kolem ${timeHM.format(rounded)}`;
+}
+
+function moonRow() {
+  const m = moonInfo();
+  const next = m.upcoming.find((u) => u.label === 'Úplněk' || u.label === 'Nov');
+  const other = m.upcoming.find((u) => u !== next && (u.label === 'Úplněk' || u.label === 'Nov'));
+  const sub = [
+    next ? (next.label === m.name ? `Přesně ${moonWhen(next.t)}` : `${next.label} ${moonWhen(next.t)}`) : null,
+    other ? `${other.label.toLowerCase()} ${dayMonth.format(new Date(other.t))}` : null,
+  ].filter(Boolean).join(' · ');
+  return h('section', { class: 'card row', 'aria-label': `Měsíc: ${m.name}, osvětleno ${Math.round(m.lit * 100)} %` },
+    h('span', { class: 'row-icon moon-wrap' }, moonIcon(m)),
+    h('span', { class: 'row-text' },
+      h('span', { class: 'row-title', text: m.name }),
+      h('span', { class: 'sub', text: sub })),
+    h('span', { class: 'row-value', text: `${Math.round(m.lit * 100)} %` }));
+}
+
 function overviewView(data, { cachedAt } = {}) {
   const now = data.latest.now;
   const out = data.latest.stations[OUTDOOR] || {};
@@ -505,7 +551,8 @@ function overviewView(data, { cachedAt } = {}) {
       h('div', { class: 'col' },
         forecastCard(data.forecast),
         radarRow(data.forecast),
-        lightRow(out.light, now))),
+        lightRow(out.light, now),
+        moonRow())),
     tabbar('home'));
 }
 

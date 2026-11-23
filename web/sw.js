@@ -7,6 +7,7 @@ const SHELL = [
   '/index.html',
   '/app.css',
   '/app.js',
+  '/moon.js',
   '/manifest.webmanifest',
   '/fonts/inter-latin-wght-normal.woff2',
   '/fonts/inter-latin-ext-wght-normal.woff2',

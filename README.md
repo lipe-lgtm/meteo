@@ -105,6 +105,10 @@ proto jsou obrázky aplikace v `web/img/`.
 Polohu se `install.sh` zeptá jednou (souřadnice stačí vložit z Mapy.cz).
 Změna: smaž řádek `LOCATION` v `/etc/meteo/install.conf` a spusť skript znovu.
 
+- **Fáze Měsíce:** počítá se přímo v aplikaci (zjednodušené polohy Slunce a Měsíce
+  podle Meeuse), bez internetu. Časy fází sedí s tabulkou USNO zhruba na ±30 minut,
+  proto se zobrazují zaokrouhleně („kolem 16:20“).
+
 ## Upozornění
 
 Do telefonu i počítače přes Web Push – přímo z aplikace, bez další aplikace nebo účtu.
