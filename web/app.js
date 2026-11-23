@@ -673,7 +673,9 @@ function diagSection(st, now) {
       : 'Stanice se ještě neozvala.' }));
     return wrap;
   }
-  for (const sn of SENSORS) {
+  // jen čidla, která stanice hlásí (vnitřní stanice nemá světlo ani PMS5003)
+  const present = Object.keys(info.sensors || {});
+  for (const sn of SENSORS.filter((x) => !present.length || present.includes(x.key))) {
     const s = (info.sensors || {})[sn.key];
     const rej = rejected.find((r) => r.metric === sn.metric);
     let state = 'idle';
@@ -690,7 +692,7 @@ function diagSection(st, now) {
   }
   const rows = [];
   if (typeof info.rssi === 'number') rows.push(['Wi-Fi signál', `${fmtSigned(info.rssi, 0)} dBm · ${rssiLabel(info.rssi)}`]);
-  if (info.reset != null) rows.push(['Poslední start', RESET_CAUSES[info.reset] || `kód ${info.reset}`]);
+  if (info.reset != null) rows.push(['Poslední start', RESET_CAUSES[info.reset] || (typeof info.reset === 'number' ? `kód ${info.reset}` : String(info.reset))]);
   if (typeof info.mem === 'number') rows.push(['Volná paměť', `${nf0.format(info.mem / 1024)} kB`]);
   if (info.fw) rows.push(['Firmware', String(info.fw)]);
   if (st.diag_at) rows.push(['Stav k', `${timeHM.format(new Date(st.diag_at * 1000))} (${ago(st.diag_at, now)})`]);

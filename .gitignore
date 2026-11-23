@@ -11,3 +11,4 @@ venv/
 *.env
 !deploy/meteo.env.example
 firmware/config.py
+firmware/indoor/settings.toml

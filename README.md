@@ -133,6 +133,12 @@ Pravidla (prahy se nastavují v aplikaci), vyhodnocení každých 5 minut (`mete
 Klíč serveru (VAPID) vytvoří `install.sh` do `/etc/meteo/vapid.pem`.
 Ruční vyhodnocení: `sudo -u meteo meteo-manage check-alerts -v`.
 
+## Vnitřní stanice
+
+Pico WH s displejem ST7735 (původní RSS klient) – měří uvnitř, posílá jako
+`indoor_station` a na displeji střídá přehled počasí s RSS titulky.
+Zapojení, knihovny a nastavení: [firmware/indoor/README.md](firmware/indoor/README.md).
+
 ## ESP32
 
 Ve složce `firmware/`: `main.py` a `config.example.py`. Zkopíruj `config.example.py`

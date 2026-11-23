@@ -1,0 +1,19 @@
+# Zkopíruj jako settings.toml do kořene disku CIRCUITPY a doplň.
+# settings.toml obsahuje hesla – do gitu nepatří (je v .gitignore).
+#
+# Záměrně NE CIRCUITPY_WIFI_SSID: ten by zapnul webové rozhraní CircuitPythonu
+# v síti. Stanice se připojuje sama s vlastními klíči níž.
+
+METEO_WIFI_SSID = "nazev-site"
+METEO_WIFI_PASSWORD = "heslo"
+
+# Stanicový port na Pi (stejný jako u ESP32) a klíč z:
+#   sudo -u meteo meteo-manage add-station indoor_station "Vnitřní stanice"
+METEO_SERVER = "http://192.168.1.109:8088"
+METEO_API_KEY = "mk_..."
+
+# RSS titulky – adresa původního RSS serveru; prázdné = jen počasí
+METEO_RSS_URL = "http://192.168.1.109:5001"
+
+# Korekce teploty z DHT22 (když nemáš DS18B20). Porovnej s teploměrem, např. "-3.5"
+METEO_DHT_OFFSET = "0"
