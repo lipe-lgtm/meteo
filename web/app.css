@@ -132,10 +132,12 @@ a.card:active { background: var(--surface-2); }
 
 .hero { padding: 20px; border-radius: 20px; gap: 6px; }
 .hero-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; }
-.hero-value { font-size: 88px; font-weight: 300; line-height: 0.95; letter-spacing: -0.04em; }
+.hero-value { font-size: clamp(56px, 19vw, 88px); font-weight: 300; line-height: 0.95; letter-spacing: -0.04em; white-space: nowrap; }
 .hero-meta { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; color: var(--text-2); }
 .hero-meta strong { color: var(--text); font-weight: 400; }
-.spark { width: 150px; height: 56px; flex: none; }
+/* graf se smí zmenšit (dlouhá hodnota jako −12,5°), nikdy nepřeteče z karty */
+.spark { flex: 0 1 150px; min-width: 0; max-width: 150px; }
+.spark svg { display: block; width: 100%; height: auto; overflow: visible; }
 
 .stale { color: var(--text-3); }
 .age { font-size: 12px; color: var(--text-3); }
@@ -390,8 +392,8 @@ a.card:active { background: var(--surface-2); }
   .detail-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr); gap: 24px; align-items: start; }
   .detail-grid .grid3 { grid-template-columns: 1fr; }
 
-  .hero-value { font-size: 112px; }
-  .spark { width: 240px; height: 72px; }
+  .hero-value { font-size: clamp(72px, 7.5vw, 112px); }
+  .spark { flex-basis: 240px; max-width: 240px; }
   .sensor-state { max-width: 280px; }
 
   .radar-map { height: max(460px, calc(100vh - 290px)); margin: 0; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
