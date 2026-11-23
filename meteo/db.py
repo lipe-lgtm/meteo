@@ -126,6 +126,8 @@ def close_db(_exc=None):
 # Sloupce přidané po první verzi (starší databáze se doplní při startu)
 MIGRATIONS = {
     "stations": {"diag": "TEXT", "diag_at": "INTEGER"},
+    # zvýšení = všechna zařízení toho uživatele se musí přihlásit znovu
+    "users": {"session_version": "INTEGER NOT NULL DEFAULT 1"},
 }
 
 

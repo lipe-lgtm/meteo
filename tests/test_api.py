@@ -40,7 +40,7 @@ def app(tmp_path):
         conn = db.get_db()
         conn.execute("INSERT INTO stations (id, name, api_key_hash, created_at) VALUES (?, ?, ?, ?)",
                      ("outdoor_station", "Venku", hash_api_key(KEY), db.now()))
-        conn.execute("INSERT INTO users VALUES (?, ?, ?)",
+        conn.execute("INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
                      ("petr", hash_password("spravne-heslo-123"), db.now()))
         conn.commit()
     return app
@@ -235,7 +235,7 @@ def geo_app(tmp_path, monkeypatch):
     })
     with app.app_context():
         conn = db.get_db()
-        conn.execute("INSERT INTO users VALUES (?, ?, ?)", ("petr", hash_password("spravne-heslo-123"), db.now()))
+        conn.execute("INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)", ("petr", hash_password("spravne-heslo-123"), db.now()))
         conn.commit()
     limiter._fails.clear()
     return app, calls, fake_fetch
@@ -374,3 +374,48 @@ def test_radar_rejects_bad_ids_and_survives_outage(client, radar_env, monkeypatc
     assert r.status_code == 200 and r.json["stale"] is True
     radar.clear_cache()
     assert client.get("/api/v1/radar").status_code == 503
+
+
+# ------------------------------------------------------------------ odhlášení všude
+
+def test_logout_all_invalidates_other_devices(app, client):
+    login(client)
+    other = app.test_client()
+    login(other)
+    assert other.get("/api/v1/auth/me").status_code == 200
+    assert client.post("/api/v1/auth/logout-all", json={}).status_code == 403          # CSRF
+    assert client.post("/api/v1/auth/logout-all", json={}, headers=APP_HDR).status_code == 200
+    assert other.get("/api/v1/auth/me").status_code == 401
+    assert client.get("/api/v1/auth/me").status_code == 401
+    login(other)                                                                       # znovu jde
+    assert other.get("/api/v1/auth/me").status_code == 200
+
+
+def test_password_change_and_user_delete_end_sessions(app, client, tmp_path, monkeypatch):
+    import manage
+    login(client)
+    monkeypatch.setenv("METEO_DB", app.config["DATABASE"])
+    monkeypatch.setattr(manage.getpass, "getpass", lambda prompt="": "nove-heslo-12345")
+    manage.main(["set-password", "petr"])
+    assert client.get("/api/v1/auth/me").status_code == 401
+
+    manage.main(["set-password", "jana"])
+    with pytest.raises(SystemExit):
+        manage.main(["delete-user", "nikdo"])
+    r = client.post("/api/v1/auth/login", json={"username": "jana", "password": "nove-heslo-12345"})
+    assert r.status_code == 200
+    manage.main(["delete-user", "jana"])
+    assert client.get("/api/v1/auth/me").status_code == 401
+    with pytest.raises(SystemExit):
+        manage.main(["delete-user", "petr"])                                           # poslední uživatel
+
+
+def test_old_users_table_gets_session_version(tmp_path):
+    path = tmp_path / "old.db"
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE users (username TEXT PRIMARY KEY, password_hash TEXT NOT NULL, created_at INTEGER NOT NULL)")
+    conn.execute("INSERT INTO users VALUES ('petr', 'x', 1)")
+    conn.commit()
+    conn.close()
+    create_app({"DATABASE": str(path), "SECRET_KEY": "t", "TESTING": True})
+    assert sqlite3.connect(path).execute("SELECT session_version FROM users").fetchone()[0] == 1

@@ -694,10 +694,19 @@ async function viewStations() {
   render(
     h('header', { class: 'header' }, h('div', { class: 'header-titles' }, h('span', { class: 'eyebrow', text: 'Zařízení' }), h('h1', { text: 'Stanice' }))),
     cards.length ? h('div', { class: 'cards' }, cards) : h('p', { class: 'note', text: 'Zatím není zaregistrovaná žádná stanice.' }),
-    h('button', {
-      class: 'btn ghost block', type: 'button', text: `Odhlásit (${me.user})`,
-      onclick: async () => { await api('/auth/logout', { body: {} }).catch(() => {}); clearCache(); location.hash = '#/login'; },
-    }),
+    h('div', { class: 'btn-row account' },
+      h('button', {
+        class: 'btn ghost', type: 'button', text: `Odhlásit (${me.user})`,
+        onclick: async () => { await api('/auth/logout', { body: {} }).catch(() => {}); clearCache(); location.hash = '#/login'; },
+      }),
+      h('button', {
+        class: 'btn ghost', type: 'button', text: 'Odhlásit všechna zařízení',
+        onclick: async () => {
+          if (!confirm(`Odhlásit účet ${me.user} na všech zařízeních včetně tohoto? Přihlásit se bude potřeba znovu. Upozornění chodit nepřestanou.`)) return;
+          await api('/auth/logout-all', { body: {} }).catch(() => {});
+          clearCache(); location.hash = '#/login';
+        },
+      })),
     h('p', { class: 'footer', text: 'Meteo' }),
     tabbar('stations'));
 }

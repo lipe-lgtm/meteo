@@ -397,6 +397,7 @@ a.card:active { background: var(--surface-2); }
 
   .login { max-width: 400px; width: 100%; margin: 0 auto; }
   .btn.ghost.block { max-width: 420px; align-self: flex-start; }
+  .btn-row.account { max-width: 640px; }
   .footer { text-align: left; }
 }
 

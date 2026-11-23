@@ -188,6 +188,8 @@ def login():
     session.permanent = True
     session["user"] = username
     conn = db.get_db()
+    session["sv"] = conn.execute(
+        "SELECT session_version FROM users WHERE username = ?", (username,)).fetchone()["session_version"]
     db.audit(conn, username, "login", ip)
     conn.commit()
     return jsonify(user=username)
@@ -195,6 +197,18 @@ def login():
 
 @bp.post("/auth/logout")
 def logout():
+    session.clear()
+    return jsonify(ok=True)
+
+
+@bp.post("/auth/logout-all")
+@login_required
+def logout_all():
+    """Odhlásí všechna zařízení tohoto uživatele (i toto). Např. při ztrátě telefonu."""
+    conn = db.get_db()
+    conn.execute("UPDATE users SET session_version = session_version + 1 WHERE username = ?", (g.user,))
+    db.audit(conn, g.user, "logout_all", _client_ip())
+    conn.commit()
     session.clear()
     return jsonify(ok=True)
 

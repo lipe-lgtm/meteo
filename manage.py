@@ -2,7 +2,8 @@
 """Správa meteo backendu z příkazové řádky.
 
   python3 manage.py init-db
-  python3 manage.py set-password petr          # vytvoří uživatele / změní heslo
+  python3 manage.py set-password petr          # vytvoří uživatele / změní heslo (odhlásí jeho zařízení)
+  python3 manage.py list-users | logout-all petr | delete-user jana
   python3 manage.py add-station outdoor_station "Venkovní stanice"
   python3 manage.py rotate-key outdoor_station  # nový klíč, starý přestane platit
   python3 manage.py list-stations
@@ -48,12 +49,49 @@ def cmd_set_password(args):
     conn = open_db()
     conn.execute(
         """INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)
-           ON CONFLICT(username) DO UPDATE SET password_hash = excluded.password_hash""",
+           ON CONFLICT(username) DO UPDATE SET password_hash = excluded.password_hash,
+               session_version = session_version + 1""",
         (args.username, hash_password(pw1), db.now()),
     )
     db.audit(conn, "cli", "set-password", args.username)
     conn.commit()
-    print(f"Heslo pro '{args.username}' nastaveno.")
+    print(f"Heslo pro '{args.username}' nastaveno. Přihlášená zařízení se musí přihlásit znovu.")
+
+
+def cmd_list_users(_args):
+    conn = open_db()
+    rows = conn.execute(
+        """SELECT u.username, u.created_at,
+                  (SELECT MAX(ts) FROM audit_log a WHERE a.actor = u.username AND a.action = 'login') AS last_login,
+                  (SELECT COUNT(*) FROM push_subscriptions p WHERE p.username = u.username) AS devices
+           FROM users u ORDER BY u.username""").fetchall()
+    fmt = lambda ts: datetime.fromtimestamp(ts, PRAGUE).strftime("%d.%m.%Y %H:%M") if ts else "nikdy"
+    for r in rows:
+        print(f"{r['username']:<16} vytvořen {fmt(r['created_at'])}, naposledy přihlášen {fmt(r['last_login'])}, "
+              f"upozornění na {r['devices']} zařízeních")
+
+
+def cmd_logout_all(args):
+    conn = open_db()
+    cur = conn.execute("UPDATE users SET session_version = session_version + 1 WHERE username = ?", (args.username,))
+    if not cur.rowcount:
+        sys.exit(f"Uživatel '{args.username}' neexistuje.")
+    db.audit(conn, "cli", "logout-all", args.username)
+    conn.commit()
+    print(f"Všechna zařízení uživatele '{args.username}' jsou odhlášena.")
+
+
+def cmd_delete_user(args):
+    conn = open_db()
+    if not conn.execute("SELECT 1 FROM users WHERE username = ?", (args.username,)).fetchone():
+        sys.exit(f"Uživatel '{args.username}' neexistuje.")
+    if conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] <= 1:
+        sys.exit("Nejde smazat posledního uživatele – do aplikace by se pak nikdo nepřihlásil.")
+    conn.execute("DELETE FROM users WHERE username = ?", (args.username,))
+    subs = conn.execute("DELETE FROM push_subscriptions WHERE username = ?", (args.username,)).rowcount
+    db.audit(conn, "cli", "delete-user", args.username)
+    conn.commit()
+    print(f"Uživatel '{args.username}' smazán, odhlášen ze všech zařízení, zrušena upozornění na {subs} zařízeních.")
 
 
 def _print_key(station_id, key):
@@ -281,7 +319,7 @@ def cmd_migrate_legacy(args):
         print(f"Pozn.: stanice {', '.join(sorted(missing))} zatím neexistují, jejich data se nepřenesla.")
 
 
-def main():
+def main(argv=None):
     p = argparse.ArgumentParser(description="Správa meteo backendu")
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -302,6 +340,13 @@ def main():
     sp.set_defaults(func=cmd_ensure_station)
 
     sub.add_parser("user-count", help=argparse.SUPPRESS).set_defaults(func=cmd_user_count)
+    sub.add_parser("list-users", help="uživatelé a jejich zařízení").set_defaults(func=cmd_list_users)
+    sp = sub.add_parser("logout-all", help="odhlásit všechna zařízení uživatele")
+    sp.add_argument("username")
+    sp.set_defaults(func=cmd_logout_all)
+    sp = sub.add_parser("delete-user", help="smazat uživatele (odhlásí ho všude)")
+    sp.add_argument("username")
+    sp.set_defaults(func=cmd_delete_user)
 
     sp = sub.add_parser("rotate-key")
     sp.add_argument("id")
@@ -324,7 +369,7 @@ def main():
     sp.add_argument("--since", help="přenést jen data od data, např. 2026-11-01")
     sp.set_defaults(func=cmd_migrate_legacy)
 
-    args = p.parse_args()
+    args = p.parse_args(argv)
     args.func(args)
 
 

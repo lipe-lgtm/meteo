@@ -147,6 +147,10 @@ Displej s RSS (Pico WH): změň `TEMP_SERVER_URL` na adresu, kterou vypsal `inst
 
 ```bash
 sudo -u meteo meteo-manage status                     # poslední hodnoty a stav čidel
+sudo -u meteo meteo-manage set-password jana          # nový uživatel / změna hesla (odhlásí jeho zařízení)
+sudo -u meteo meteo-manage list-users                 # uživatelé, poslední přihlášení, zařízení s upozorněním
+sudo -u meteo meteo-manage logout-all petr            # odhlásit všude (ztracený telefon)
+sudo -u meteo meteo-manage delete-user jana           # smazat uživatele a jeho upozornění
 sudo -u meteo meteo-manage list-stations              # kdy se která stanice ozvala
 sudo -u meteo meteo-manage rotate-key outdoor_station # nový klíč (starý přestane platit)
 sudo -u meteo meteo-manage set-password petr          # změna hesla

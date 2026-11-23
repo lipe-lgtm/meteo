@@ -73,6 +73,13 @@ def login_required(view):
         user = session.get("user")
         if not user:
             return jsonify(error="unauthorized"), 401
+        # Cookie je podepsaná, ale platí, dokud nevyprší. Proto při každém požadavku
+        # ověřit, že uživatel pořád existuje a nebyl odhlášen všude (změna hesla atd.)
+        row = get_db().execute(
+            "SELECT session_version FROM users WHERE username = ?", (user,)).fetchone()
+        if row is None or session.get("sv") != row["session_version"]:
+            session.clear()
+            return jsonify(error="unauthorized"), 401
         if request.method not in ("GET", "HEAD", "OPTIONS"):
             if request.headers.get("X-Requested-With") != "meteo-app":
                 return jsonify(error="csrf_check_failed"), 403
